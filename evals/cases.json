@@ -1,0 +1,98 @@
+[
+  {
+    "id": "rag-cuti-tahunan",
+    "question": "Berapa hari jatah cuti tahunan karyawan tetap?",
+    "employee_id": null,
+    "expected_route": "rag",
+    "must_contain": ["12 hari"],
+    "expected_source": "kebijakan_cuti.md#Kebijakan Cuti > Cuti Tahunan"
+  },
+  {
+    "id": "rag-cuti-melahirkan",
+    "question": "Berapa lama cuti melahirkan?",
+    "employee_id": null,
+    "expected_route": "rag",
+    "must_contain": ["3 bulan"],
+    "expected_source": "kebijakan_cuti.md#Kebijakan Cuti > Cuti Melahirkan dan Cuti Ayah"
+  },
+  {
+    "id": "rag-kerja-remote",
+    "question": "Dalam seminggu boleh kerja dari rumah berapa hari?",
+    "employee_id": null,
+    "expected_route": "rag",
+    "must_contain": ["2 hari"],
+    "expected_source": "kerja_remote.md#Kebijakan Kerja Remote > Ketentuan Umum"
+  },
+  {
+    "id": "rag-reimbursement",
+    "question": "Berapa lama batas waktu mengajukan klaim reimbursement?",
+    "employee_id": null,
+    "expected_route": "rag",
+    "must_contain": ["30 hari"],
+    "expected_source": "reimbursement.md#Kebijakan Reimbursement > Batas Waktu Pengajuan"
+  },
+  {
+    "id": "rag-gajian",
+    "question": "Tanggal berapa gaji dibayarkan?",
+    "employee_id": null,
+    "expected_route": "rag",
+    "must_contain": ["25"],
+    "expected_source": "faq_karyawan.md#FAQ Karyawan > Kapan gaji dibayarkan?"
+  },
+  {
+    "id": "rag-lembur-libur",
+    "question": "Lembur di hari libur dibayar berapa kali upah per jam?",
+    "employee_id": null,
+    "expected_route": "rag",
+    "must_contain": ["2 kali"],
+    "expected_source": "absensi_lembur.md#Absensi dan Lembur > Lembur"
+  },
+  {
+    "id": "tool-sisa-cuti",
+    "question": "Sisa cuti tahunan saya berapa?",
+    "employee_id": "E001",
+    "expected_route": "tool",
+    "must_contain": ["7"],
+    "expected_source": null
+  },
+  {
+    "id": "tool-bawahan",
+    "question": "Siapa saja bawahan langsung saya?",
+    "employee_id": "E001",
+    "expected_route": "tool",
+    "must_contain": ["Budi", "Sari"],
+    "expected_source": null
+  },
+  {
+    "id": "tool-id-tidak-ada",
+    "question": "Berapa sisa cuti karyawan dengan ID E999?",
+    "employee_id": null,
+    "expected_route": "tool",
+    "must_contain": ["E999"],
+    "expected_source": null
+  },
+  {
+    "id": "unknown-gaji-direktur",
+    "question": "Berapa gaji direktur utama?",
+    "employee_id": null,
+    "expected_route": "unknown",
+    "must_contain": [],
+    "expected_source": null
+  },
+  {
+    "id": "unknown-ceo",
+    "question": "Siapa CEO perusahaan ini?",
+    "employee_id": null,
+    "expected_route": "unknown",
+    "must_contain": [],
+    "expected_source": null
+  },
+  {
+    "id": "unknown-kendaraan-dinas",
+    "question": "Apa kebijakan perusahaan soal kendaraan dinas?",
+    "employee_id": null,
+    "expected_route": "unknown",
+    "must_contain": [],
+    "expected_source": null
+  }
+]
