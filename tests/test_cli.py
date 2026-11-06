@@ -34,6 +34,20 @@ def patch_agent_to_raise(monkeypatch, error):
     monkeypatch.setattr(cli, "open_agent", fake_open_agent)
 
 
+def test_llm_error_inside_task_group_prints_one_line(built_index, monkeypatch, capsys):
+    import anyio
+
+    @asynccontextmanager
+    async def task_group_agent(settings):
+        # The real MCP client runs inside an anyio task group, which wraps errors in an ExceptionGroup.
+        async with anyio.create_task_group():
+            yield RaisingAgent(LLMUnavailableError("400 INVALID_ARGUMENT: API key not valid."))
+
+    monkeypatch.setattr(cli, "open_agent", task_group_agent)
+    assert cli.main(["ask", "Berapa cuti?"]) == 1
+    assert capsys.readouterr().err.strip().splitlines() == ["LLM tidak tersedia: 400 INVALID_ARGUMENT: API key not valid."]
+
+
 def test_ask_without_index_exits_2(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HR_INDEX_DIR", str(tmp_path / "missing"))
     assert cli.main(["ask", "Berapa cuti?"]) == 2

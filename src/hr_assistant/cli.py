@@ -35,6 +35,19 @@ def main(argv: list[str] | None = None) -> int:
     except LLMUnavailableError as error:
         print(f"LLM tidak tersedia: {error}", file=sys.stderr)
         return 1
+    except BaseExceptionGroup as group:
+        llm_errors = group.subgroup(LLMUnavailableError)
+        if llm_errors is None:
+            raise
+        print(f"LLM tidak tersedia: {_first_leaf(llm_errors)}", file=sys.stderr)
+        return 1
+
+
+def _first_leaf(group: BaseExceptionGroup) -> BaseException:
+    error: BaseException = group
+    while isinstance(error, BaseExceptionGroup):
+        error = error.exceptions[0]
+    return error
 
 
 def _parser() -> argparse.ArgumentParser:

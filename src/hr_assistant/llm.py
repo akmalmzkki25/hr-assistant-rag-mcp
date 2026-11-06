@@ -77,7 +77,7 @@ class GeminiLLM:
             except (errors.ClientError, errors.ServerError) as error:
                 retryable = isinstance(error, errors.ServerError) or error.code == 429
                 if not retryable or attempt == self.max_retries:
-                    raise LLMUnavailableError(str(error)) from error
+                    raise LLMUnavailableError(f"{error.code} {error.status}: {error.message}") from error
                 self._sleep(2**attempt)
         raise AssertionError("unreachable")
 

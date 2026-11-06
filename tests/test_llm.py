@@ -85,6 +85,7 @@ def test_rate_limit_retries_then_raises(monkeypatch):
 def test_bad_request_is_not_retried(monkeypatch):
     llm = GeminiLLM("m", api_key="x", max_retries=3, sleep=lambda s: None)
     calls = fake_generate_raising(monkeypatch, llm, code=400)
-    with pytest.raises(LLMUnavailableError):
+    with pytest.raises(LLMUnavailableError) as raised:
         llm.generate("sys", [Message(role="user", text="hai")], [])
     assert calls.count == 1
+    assert str(raised.value) == "400 RESOURCE_EXHAUSTED: kuota habis"
