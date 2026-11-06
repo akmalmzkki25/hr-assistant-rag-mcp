@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     docs_dir: Path = Field(default=PROJECT_ROOT / "data" / "docs", validation_alias="HR_DOCS_DIR")
     top_k: int = 4
-    min_score: float = Field(default=0.6, validation_alias="HR_MIN_SCORE")
+    min_score: float = Field(default=0.7, validation_alias="HR_MIN_SCORE")
     max_steps: int = 6
 
 
