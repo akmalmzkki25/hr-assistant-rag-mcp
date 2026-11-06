@@ -3,14 +3,14 @@
 from alembic import context
 from sqlalchemy import create_engine, pool
 
-from hr_assistant.db.database import sqlalchemy_url
+from hr_assistant.db.database import CONNECT_TIMEOUT_SECONDS, sqlalchemy_url
 
 config = context.config
 
 
 def run_migrations_online() -> None:
     url = config.get_main_option("sqlalchemy.url") or sqlalchemy_url()
-    engine = create_engine(url, poolclass=pool.NullPool)
+    engine = create_engine(url, poolclass=pool.NullPool, connect_args={"connect_timeout": CONNECT_TIMEOUT_SECONDS})
     with engine.connect() as connection:
         context.configure(connection=connection, target_metadata=None)
         with context.begin_transaction():

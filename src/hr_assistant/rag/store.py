@@ -23,7 +23,16 @@ class SearchHit:
 def make_typesense_client(settings: Settings) -> typesense.Client:
     url = urlparse(settings.typesense_url)
     node = {"host": url.hostname, "port": str(url.port or 8108), "protocol": url.scheme or "http"}
-    return typesense.Client({"nodes": [node], "api_key": settings.typesense_api_key or "", "connection_timeout_seconds": 5})
+    return typesense.Client(
+        {
+            "nodes": [node],
+            "api_key": settings.typesense_api_key or "",
+            "connection_timeout_seconds": 5,
+            # One quick retry: a stopped container should surface in seconds, not after the client's default backoff.
+            "num_retries": 1,
+            "retry_interval_seconds": 0.2,
+        }
+    )
 
 
 class TypesenseStore:

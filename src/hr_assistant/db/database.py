@@ -13,6 +13,13 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from sqlalchemy.engine import URL
 
+# Without a timeout, a connection to a stopped Postgres on Windows waits about four minutes before failing.
+CONNECT_TIMEOUT_SECONDS = 5
+
+
+def connect(database_url: str, **kwargs) -> psycopg.Connection:
+    return psycopg.connect(database_url, connect_timeout=CONNECT_TIMEOUT_SECONDS, **kwargs)
+
 
 def with_database(database_url: str, dbname: str) -> str:
     return make_conninfo(database_url, dbname=dbname)
@@ -39,7 +46,7 @@ def sqlalchemy_url(database_url: str | None = None) -> str:
 def init_database(database_url: str) -> None:
     """Buat database kalau belum ada, lalu jalankan migrasi sampai head. Aman dijalankan berulang."""
     dbname = conninfo_to_dict(database_url)["dbname"]
-    with psycopg.connect(with_database(database_url, "postgres"), autocommit=True) as admin:
+    with connect(with_database(database_url, "postgres"), autocommit=True) as admin:
         exists = admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,)).fetchone()
         if not exists:
             admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
@@ -85,14 +92,14 @@ class EmployeeRepository:
         )
 
     def subordinates(self, employee_id: str) -> list[dict]:
-        with psycopg.connect(self.database_url, row_factory=dict_row) as conn:
+        with connect(self.database_url, row_factory=dict_row) as conn:
             return conn.execute(
                 "SELECT employee_id, name, position FROM employees WHERE manager_id = %s ORDER BY employee_id",
                 (employee_id,),
             ).fetchall()
 
     def _one(self, query: str, params: tuple) -> dict | None:
-        with psycopg.connect(self.database_url, row_factory=dict_row) as conn:
+        with connect(self.database_url, row_factory=dict_row) as conn:
             return conn.execute(query, params).fetchone()
 
 
@@ -113,7 +120,7 @@ class RunLogRepository:
         self.database_url = database_url
 
     def log(self, record: RunRecord) -> None:
-        with psycopg.connect(self.database_url) as conn:
+        with connect(self.database_url) as conn:
             conn.execute(
                 """
                 INSERT INTO agent_runs (question, employee_id, answer, route, stop_reason, sources, steps, latency_ms)

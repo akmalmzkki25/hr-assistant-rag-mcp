@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from fakes import ScriptedLLM, call, final
-from hr_assistant.agent import UNKNOWN_ANSWER, AgentResult, HRAgent
+from hr_assistant.agent import UNKNOWN_ANSWER
+from hr_assistant.agent.graph import AgentResult
 from hr_assistant.evals import EvalCase, load_cases, run_eval, score_case
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,9 +31,9 @@ def test_score_rag_case_checks_source():
     assert not score.passed
 
 
-def test_score_contains_is_case_insensitive():
-    case = EvalCase("t1", "bawahan?", "E001", "tool", ["Budi"], None)
-    assert score_case(case, result("bawahanmu: budi dan sari", "tool")).passed
+def test_score_contains_ignores_case_and_markdown_bold():
+    case = EvalCase("t1", "bawahan?", "E001", "tool", ["Budi", "7 hari"], None)
+    assert score_case(case, result("bawahanmu: **budi** dan sari, sisa **7 hari**", "tool")).passed
 
 
 def test_mixed_route_satisfies_rag_and_tool():
@@ -43,23 +43,26 @@ def test_mixed_route_satisfies_rag_and_tool():
 
 def test_cases_file_is_valid():
     cases = load_cases(ROOT / "evals" / "cases.json")
-    assert len(cases) == 12
+    assert len(cases) == 15
     assert {c.expected_route for c in cases} == {"rag", "tool", "unknown"}
     assert all(c.expected_source for c in cases if c.expected_route == "rag")
 
 
+class FakeAgent:
+    def __init__(self, answers):
+        self.answers = answers
+
+    async def ask(self, question, employee_id=None, thread_id=None):
+        return self.answers[question]
+
+
 @pytest.mark.anyio
-async def test_run_eval_reports_pass_rate(retriever):
-    from mcp import Client
-
-    from hr_assistant.mcp_server import server
-
+async def test_run_eval_reports_pass_rate():
     cases = [
         EvalCase("t1", "Sisa cuti saya?", "E001", "tool", ["7"], None),
         EvalCase("u1", "Siapa CEO?", None, "unknown", [], None),
     ]
-    llm = ScriptedLLM([call("get_leave_balance", employee_id="E001"), final("Sisa cuti 7 hari."), final("Gajinya besar.")] + [final("Gajinya besar.")])
-    async with Client(server) as mcp:
-        report = await run_eval(HRAgent(llm, mcp, retriever), cases)
-    assert report.total == 2 and report.passed == 2
-    assert report.check_rates["refusal"] == 1.0 and report.failures == []
+    agent = FakeAgent({"Sisa cuti saya?": result("Sisa cuti 7 hari.", "tool"), "Siapa CEO?": result(UNKNOWN_ANSWER, "none")})
+    report = await run_eval(agent, cases)
+    assert (report.total, report.passed, report.failures) == (2, 2, [])
+    assert report.check_rates["refusal"] == 1.0
