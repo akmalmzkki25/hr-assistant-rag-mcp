@@ -21,6 +21,21 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(scope="session")
+def test_database_url():
+    import psycopg
+
+    from hr_assistant.config import get_settings
+    from hr_assistant.db.database import init_database, with_database
+
+    url = with_database(get_settings().database_url, "hr_assistant_test")
+    try:
+        init_database(url)
+    except psycopg.OperationalError:
+        pytest.skip("Postgres tidak bisa dihubungi")
+    return url
+
+
 @pytest.fixture
 def sample_docs(tmp_path):
     docs = tmp_path / "docs"
