@@ -1,0 +1,32 @@
+{
+  "year": 2026,
+  "employees": [
+    {
+      "employee_id": "E001",
+      "name": "Rina Wijaya",
+      "position": "Engineering Manager",
+      "manager_id": null,
+      "annual_quota": 12,
+      "annual_used": 5,
+      "sick_days_used": 1
+    },
+    {
+      "employee_id": "E002",
+      "name": "Budi Santoso",
+      "position": "Backend Engineer",
+      "manager_id": "E001",
+      "annual_quota": 12,
+      "annual_used": 10,
+      "sick_days_used": 0
+    },
+    {
+      "employee_id": "E003",
+      "name": "Sari Lestari",
+      "position": "Data Analyst",
+      "manager_id": "E001",
+      "annual_quota": 12,
+      "annual_used": 0,
+      "sick_days_used": 2
+    }
+  ]
+}

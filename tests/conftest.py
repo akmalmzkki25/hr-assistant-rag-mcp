@@ -21,6 +21,11 @@ Karyawan boleh kerja remote maksimal 2 hari per minggu dengan persetujuan atasan
 
 
 @pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
 def sample_docs(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()
