@@ -14,7 +14,7 @@
 
 - Bahasa: Python 3.12, layout `src/hr_assistant/`, dijalankan dengan `.venv/Scripts/python.exe`.
 - Dependensi: `mcp>=2.3,<3`, `google-genai>=3.0`, `chromadb>=1.5`, `fastembed>=0.9`, `pypdf>=5`, `python-dotenv>=1`; dev: `pytest>=9`.
-- Nama tool MCP persis dari spec: `get_leave_balance(employee_id)` dan `get_subordinat_list(employee_id)`.
+- Nama tool MCP persis: `get_leave_balance(employee_id)` dan `get_subordinat_list(employee_id)`.
 - Agent wajib memanggil tool lewat protokol MCP (subprocess stdio di CLI, `Client(server)` in-process hanya di test). Agent tidak boleh mengimpor fungsi tool secara langsung.
 - Guardrail: kalau informasi tidak ada di dokumen, jawabannya persis `UNKNOWN_ANSWER = "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."`
 - LLM: Gemini dengan `GEMINI_API_KEY` dari environment atau `.env`, dan model dari `GEMINI_MODEL` (default `gemini-3.8-flash`).

@@ -8,21 +8,21 @@ Dokumen HR di `data/docs/` dan data karyawan di migrasi seed adalah contoh fikti
 
 | Kebutuhan | Penjelasan | Kode |
 |---|---|---|
-| 1. Diagram arsitektur high-level, end to end | [Arsitektur (HLD)](#arsitektur-hld) | |
-| 1. Alur dan relasi komponen | [Alur dan relasi komponen](#alur-dan-relasi-komponen) | |
-| 1. Kapan agent pakai RAG vs tool MCP | [Kapan RAG, kapan MCP](#kapan-rag-kapan-mcp) | `agent/prompts.py`, `agent/graph.py` |
-| 1. Justifikasi 2-3 kalimat per komponen | [Justifikasi komponen](#justifikasi-komponen) | |
-| 2. Chunking dokumen contoh | [Pipeline RAG](#pipeline-rag) | `rag/loader.py`, `rag/chunking.py`, `data/docs/` |
-| 2. Embedding | [Pipeline RAG](#pipeline-rag) | `rag/embeddings.py` |
-| 2. Vector store | [Pipeline RAG](#pipeline-rag) | `rag/store.py`, `rag/ingest.py` |
-| 2. Retrieval top-k | [Pipeline RAG](#pipeline-rag) | `rag/retriever.py` |
-| 3. MCP server dengan `get_leave_balance(employee_id)` dan `get_subordinat_list(employee_id)` | [MCP server](#mcp-server) | `mcp_server.py`, `db/` |
-| 4. Agent terhubung ke MCP lewat protokol MCP | [Agent](#agent) | `cli.py` (`open_agent`), `agent/graph.py` |
-| 4. Menjawab dari hasil retrieval | [Agent](#agent) | `agent/tools.py` |
-| 4. Mendeteksi kapan harus memanggil tool | [Kapan RAG, kapan MCP](#kapan-rag-kapan-mcp) | `agent/graph.py` |
-| 4. Guardrail "tidak tahu" | [Guardrail](#guardrail) | `agent/guardrail.py` |
-| 4. Use case Harness dan Loop Engineering | [Harness dan loop engineering](#harness-dan-loop-engineering) | `agent/graph.py`, `evals.py` |
-| 5. README: arsitektur, trade-off, eval production | [Arsitektur (HLD)](#arsitektur-hld), [Trade-off](#trade-off), [Evaluasi untuk production](#evaluasi-untuk-production) | |
+| Diagram arsitektur high-level, end to end | [Arsitektur (HLD)](#arsitektur-hld) | |
+| Alur dan relasi komponen | [Alur dan relasi komponen](#alur-dan-relasi-komponen) | |
+| Kapan agent pakai RAG atau tool MCP | [Kapan RAG, kapan MCP](#kapan-rag-kapan-mcp) | `agent/prompts.py`, `agent/graph.py` |
+| Alasan pemilihan setiap komponen | [Justifikasi komponen](#justifikasi-komponen) | |
+| Chunking dokumen | [Pipeline RAG](#pipeline-rag) | `rag/loader.py`, `rag/chunking.py`, `data/docs/` |
+| Embedding | [Pipeline RAG](#pipeline-rag) | `rag/embeddings.py` |
+| Vector store | [Pipeline RAG](#pipeline-rag) | `rag/store.py`, `rag/ingest.py` |
+| Retrieval top-k | [Pipeline RAG](#pipeline-rag) | `rag/retriever.py` |
+| MCP server dengan `get_leave_balance(employee_id)` dan `get_subordinat_list(employee_id)` | [MCP server](#mcp-server) | `mcp_server.py`, `db/` |
+| Agent terhubung ke tool lewat protokol MCP | [Agent](#agent) | `cli.py` (`open_agent`), `agent/graph.py` |
+| Menjawab dari hasil retrieval | [Agent](#agent) | `agent/tools.py` |
+| Mendeteksi kapan harus memanggil tool | [Kapan RAG, kapan MCP](#kapan-rag-kapan-mcp) | `agent/graph.py` |
+| Guardrail "tidak tahu" | [Guardrail](#guardrail) | `agent/guardrail.py` |
+| Harness dan loop engineering | [Harness dan loop engineering](#harness-dan-loop-engineering) | `agent/graph.py`, `evals.py` |
+| Trade-off dan rencana eval production | [Arsitektur (HLD)](#arsitektur-hld), [Trade-off](#trade-off), [Evaluasi untuk production](#evaluasi-untuk-production) | |
 
 Semua path kode di atas relatif terhadap `src/hr_assistant/`. Detail teknis tambahan (aturan guardrail lengkap, hak akses, penanganan error) ada di [docs/architecture.md](docs/architecture.md).
 
