@@ -1,9 +1,5 @@
 import pytest
 
-from fakes import HashEmbedder
-from hr_assistant.rag import Retriever, build_index
-from hr_assistant.vector_store import ChromaStore
-
 CUTI_DOC = """# Kebijakan Cuti
 
 ## Cuti Tahunan
@@ -25,6 +21,21 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(scope="session")
+def test_database_url():
+    import psycopg
+
+    from hr_assistant.config import get_settings
+    from hr_assistant.db.database import init_database, with_database
+
+    url = with_database(get_settings().database_url, "hr_assistant_test")
+    try:
+        init_database(url)
+    except psycopg.OperationalError:
+        pytest.skip("Postgres tidak bisa dihubungi")
+    return url
+
+
 @pytest.fixture
 def sample_docs(tmp_path):
     docs = tmp_path / "docs"
@@ -32,11 +43,3 @@ def sample_docs(tmp_path):
     (docs / "kebijakan_cuti.md").write_text(CUTI_DOC, encoding="utf-8")
     (docs / "kerja_remote.md").write_text(REMOTE_DOC, encoding="utf-8")
     return docs
-
-
-@pytest.fixture
-def retriever(tmp_path, sample_docs):
-    store = ChromaStore(tmp_path / "idx", "hr_docs")
-    embedder = HashEmbedder()
-    build_index(sample_docs, store, embedder)
-    return Retriever(store, embedder, top_k=4, min_score=0.45)

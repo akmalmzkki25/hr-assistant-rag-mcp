@@ -4,25 +4,36 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hr-assistant"
-version = "0.1.0"
+version = "0.2.0"
 description = "Chatbot HR internal: RAG atas dokumen HR dan tool MCP untuk data karyawan."
 requires-python = ">=3.12"
 dependencies = [
-    "mcp>=2.3,<3",
+    "langgraph>=1.2,<2",
+    "langchain-core>=1.7,<2",
+    "langchain-google-genai>=4.4,<5",
+    "langchain-mcp-adapters>=0.3.2,<0.4",
+    "langchain-text-splitters>=1.1,<2",
+    "mcp>=1.30,<2",
     "google-genai>=3.0",
-    "chromadb>=1.5",
-    "fastembed>=0.9",
+    "typesense>=2.1,<3",
+    "psycopg[binary]>=3.2,<4",
+    "alembic>=1.14,<2",
+    "sqlalchemy>=2.0,<3",
+    "pydantic-settings>=2.6,<3",
     "pypdf>=5",
-    "python-dotenv>=1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9"]
+dev = ["pytest>=9", "pymupdf>=1.24"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+hr_assistant = ["db/migrations/*.py", "db/migrations/*.mako", "db/migrations/versions/*.py"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["tests"]
-filterwarnings = ["ignore::SyntaxWarning"]
+markers = ["integration: needs local Postgres, Typesense, or a spawned MCP server"]
+filterwarnings = ["ignore::SyntaxWarning", "ignore::DeprecationWarning:typesense.*"]

@@ -1,4 +1,4 @@
-"""CLI: ingest dokumen, tanya jawab, chat, dan eval."""
+"""CLI: siapkan database, ingest dokumen, tanya jawab, chat, dan eval."""
 
 import argparse
 import asyncio
@@ -6,24 +6,24 @@ import json
 import os
 import sys
 import threading
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
-from mcp import Client, StdioServerParameters
-
-from hr_assistant.agent import AgentResult, HRAgent
-from hr_assistant.config import PROJECT_ROOT, Settings, load_settings
-from hr_assistant.evals import load_cases, run_eval
-from hr_assistant.llm import GeminiLLM, LLMUnavailableError
+from hr_assistant.agent.graph import AgentResult, HRAgent
+from hr_assistant.config import PROJECT_ROOT, Settings, get_settings
+from hr_assistant.errors import SetupError
 
 NO_INDEX = "Index belum dibuat. Jalankan: python -m hr_assistant ingest"
 NO_API_KEY = "GEMINI_API_KEY belum diisi. Salin .env.example ke .env lalu isi key."
 EMPTY_QUESTION = "Pertanyaan tidak boleh kosong."
 
 
-class UsageError(Exception):
-    """Kesalahan input atau setup yang bisa diperbaiki pengguna (exit code 2)."""
+EXIT_WORDS = {"keluar", "exit", "quit"}
+
+UsageError = SetupError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,32 +33,24 @@ def main(argv: list[str] | None = None) -> int:
     except UsageError as error:
         print(error, file=sys.stderr)
         return 2
-    except LLMUnavailableError as error:
-        print(f"LLM tidak tersedia: {error}", file=sys.stderr)
-        return 1
     except KeyboardInterrupt:
         print("Dibatalkan.", file=sys.stderr)
         return 130
-    except BaseExceptionGroup as group:
-        llm_errors = group.subgroup(LLMUnavailableError)
-        if llm_errors is None:
+    except BaseException as error:
+        message = _describe_service_error(error)
+        if message is None:
             raise
-        print(f"LLM tidak tersedia: {_first_leaf(llm_errors)}", file=sys.stderr)
+        print(message, file=sys.stderr)
         return 1
-
-
-def _first_leaf(group: BaseExceptionGroup) -> BaseException:
-    error: BaseException = group
-    while isinstance(error, BaseExceptionGroup):
-        error = error.exceptions[0]
-    return error
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="hr_assistant", description="Chatbot HR internal (RAG + MCP).")
     commands = parser.add_subparsers(required=True)
 
-    ingest = commands.add_parser("ingest", help="Baca dokumen HR dan buat index vektor.")
+    commands.add_parser("db-init", help="Buat database dan jalankan migrasi Alembic.").set_defaults(handler=_cmd_db_init)
+    ingest = commands.add_parser("ingest", help="Index dokumen HR ke Typesense. Default: hanya dokumen baru atau berubah.")
+    ingest.add_argument("--full", action="store_true", help="Hapus index lalu embed ulang semua dokumen.")
     ingest.set_defaults(handler=_cmd_ingest)
 
     ask = commands.add_parser("ask", help="Ajukan satu pertanyaan.")
@@ -67,7 +59,7 @@ def _parser() -> argparse.ArgumentParser:
     ask.add_argument("--trace", action="store_true", help="Cetak setiap langkah agent sebagai JSON.")
     ask.set_defaults(handler=_cmd_ask)
 
-    chat = commands.add_parser("chat", help="Tanya jawab interaktif.")
+    chat = commands.add_parser("chat", help="Tanya jawab interaktif dengan memori percakapan.")
     chat.add_argument("--employee-id")
     chat.set_defaults(handler=_cmd_chat)
 
@@ -79,60 +71,100 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _cmd_ingest(args: argparse.Namespace) -> int:
-    from hr_assistant.chunking import chunk_markdown, load_documents
-    from hr_assistant.embeddings import FastEmbedEmbedder
-    from hr_assistant.rag import build_index
-    from hr_assistant.vector_store import ChromaStore
+def _cmd_db_init(args: argparse.Namespace) -> int:
+    from hr_assistant.db.database import init_database, migration_head
 
-    settings = load_settings()
-    documents = load_documents(settings.docs_dir)
-    if not documents:
-        raise UsageError(f"Tidak ada dokumen .md, .txt, atau .pdf di {settings.docs_dir}")
-    if not any(chunk_markdown(text, source=name) for name, text in documents):
-        raise UsageError(f"Tidak ada teks yang bisa di-index di {settings.docs_dir}. Untuk PDF hasil scan, jalankan OCR dulu.")
-    store = ChromaStore(settings.index_dir, settings.collection)
-    count = build_index(settings.docs_dir, store, FastEmbedEmbedder(settings.embedding_model))
-    print(f"Index dibuat: {count} chunk dari {len(documents)} dokumen.")
+    init_database(get_settings().database_url)
+    print(f"Database siap, migrasi sampai revision {migration_head()}.")
     return 0
 
 
+def _cmd_ingest(args: argparse.Namespace) -> int:
+    from hr_assistant.rag import ingest
+    from hr_assistant.rag.chunking import split_documents
+    from hr_assistant.rag.loader import load_documents
+
+    settings = get_settings()
+    documents = load_documents(settings.docs_dir)
+    if not documents:
+        raise UsageError(f"Tidak ada dokumen .md, .txt, atau .pdf di {settings.docs_dir}")
+    if not split_documents(documents):
+        raise UsageError(f"Tidak ada teks yang bisa di-index di {settings.docs_dir}. Untuk PDF hasil scan, jalankan OCR dulu.")
+    _require_api_key(settings)
+    store = _store(settings)
+    _require_typesense(store, settings)
+    # Changing the embedding model or dimension changes this, so every document is re-embedded.
+    fingerprint = f"{settings.embedding_model}:{settings.embedding_dim}"
+    if args.full:
+        count = ingest.build_index(settings.docs_dir, store, _embeddings(settings), fingerprint=fingerprint)
+        print(f"Index dibuat ulang: {count} chunk dari {len(documents)} dokumen.")
+        return 0
+    _print_sync_report(ingest.sync_index(settings.docs_dir, store, _embeddings(settings), fingerprint=fingerprint))
+    return 0
+
+
+def _print_sync_report(report) -> None:
+    if report.rebuilt:
+        print("Index dari versi lama, jadi dibuat ulang penuh.")
+    if not (report.rebuilt or report.added or report.updated or report.removed):
+        print(f"Index sudah terbaru: {len(report.unchanged)} dokumen, tidak ada yang di-embed ulang.")
+        return
+    print(
+        f"Index diperbarui: {len(report.added)} baru, {len(report.updated)} berubah, {len(report.removed)} dihapus, "
+        f"{len(report.unchanged)} tetap. {report.embedded_chunks} chunk di-embed."
+    )
+    for label, sources in (("baru", report.added), ("berubah", report.updated), ("dihapus", report.removed)):
+        for source in sources:
+            print(f"  {label}: {source}")
+
+
 def _cmd_ask(args: argparse.Namespace) -> int:
-    question = _require_question(args.question)
+    question = args.question.strip()
+    if not question:
+        raise UsageError(EMPTY_QUESTION)
     settings = _ready_settings()
 
-    async def run() -> AgentResult:
+    async def run() -> tuple[AgentResult, int]:
         async with open_agent(settings) as agent:
-            return await agent.ask(question, employee_id=args.employee_id)
+            started = time.monotonic()
+            result = await agent.ask(question, employee_id=args.employee_id)
+            return result, int((time.monotonic() - started) * 1000)
 
-    result = asyncio.run(run())
+    result, latency_ms = asyncio.run(run())
     if args.trace:
         for step in result.to_dict()["steps"]:
             print(json.dumps(step, ensure_ascii=False))
     _print_answer(result)
+    _log_run(settings, question, args.employee_id, result, latency_ms)
     return 0
 
 
 def _cmd_chat(args: argparse.Namespace) -> int:
     settings = _ready_settings()
+    thread_id = uuid4().hex
 
     async def run() -> None:
         async with open_agent(settings) as agent:
-            print("Ketik pertanyaan. Kosongkan lalu Enter untuk keluar.")
+            print("Ketik pertanyaan. Ketik keluar, atau kosongkan lalu Enter, untuk selesai.")
             while True:
                 try:
                     question = (await _read_line("Kamu: ")).strip()
                 except EOFError:
                     return
-                if not question:
+                if not question or question.casefold() in EXIT_WORDS:
                     return
-                _print_answer(await agent.ask(question, employee_id=args.employee_id))
+                started = time.monotonic()
+                result = await agent.ask(question, employee_id=args.employee_id, thread_id=thread_id)
+                _print_answer(result)
+                _log_run(settings, question, args.employee_id, result, int((time.monotonic() - started) * 1000))
 
     asyncio.run(run())
     return 0
 
 
 def _cmd_eval(args: argparse.Namespace) -> int:
+    from hr_assistant.evals import load_cases, run_eval
+
     settings = _ready_settings()
     cases = load_cases(args.cases)
 
@@ -143,7 +175,7 @@ def _cmd_eval(args: argparse.Namespace) -> int:
     report = asyncio.run(run())
     for score in report.scores:
         failed = [name for name, ok in score.checks.items() if not ok]
-        print(f"{'LULUS' if score.passed else 'GAGAL'}  {score.case_id:<26} route={score.route:<6} {' '.join(failed)}")
+        print(f"{'LULUS' if score.passed else 'GAGAL'}  {score.case_id:<28} route={score.route:<6} {' '.join(failed)}")
     print(f"Lulus: {report.passed}/{report.total}")
     print("Per cek: " + ", ".join(f"{name} {rate:.0%}" for name, rate in report.check_rates.items()))
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -154,19 +186,106 @@ def _cmd_eval(args: argparse.Namespace) -> int:
 
 @asynccontextmanager
 async def open_agent(settings: Settings) -> AsyncIterator[HRAgent]:
-    from hr_assistant.embeddings import FastEmbedEmbedder
-    from hr_assistant.rag import Retriever
-    from hr_assistant.vector_store import ChromaStore
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from langchain_mcp_adapters.tools import load_mcp_tools
 
-    store = ChromaStore(settings.index_dir, settings.collection)
-    retriever = Retriever(store, FastEmbedEmbedder(settings.embedding_model), settings.top_k, settings.min_score)
-    llm = GeminiLLM(settings.gemini_model, api_key=settings.gemini_api_key)
+    from hr_assistant.agent.graph import build_graph
+    from hr_assistant.agent.tools import make_search_tool
+    from hr_assistant.rag.retriever import HRRetriever
+
+    retriever = HRRetriever(_store(settings), _embeddings(settings), settings.top_k, settings.min_score)
+    llm = ChatGoogleGenerativeAI(model=settings.gemini_model, google_api_key=settings.gemini_api_key, max_retries=3)
     # The MCP server runs as a separate process; tools are reached only through the protocol.
-    params = StdioServerParameters(
-        command=sys.executable, args=["-m", "hr_assistant.mcp_server"], env=dict(os.environ), cwd=str(PROJECT_ROOT)
+    servers = {
+        "hr": {
+            "command": sys.executable,
+            "args": ["-m", "hr_assistant.mcp_server"],
+            "transport": "stdio",
+            "env": dict(os.environ),
+            "cwd": str(PROJECT_ROOT),
+        }
+    }
+    async with MultiServerMCPClient(servers).session("hr") as session:
+        tools = [make_search_tool(retriever), *await load_mcp_tools(session)]
+        yield HRAgent(build_graph(llm, tools, max_steps=settings.max_steps), max_steps=settings.max_steps)
+
+
+def _ready_settings() -> Settings:
+    settings = get_settings()
+    _require_api_key(settings)
+    store = _store(settings)
+    _require_typesense(store, settings)
+    if store.count() == 0:
+        raise UsageError(NO_INDEX)
+    return settings
+
+
+def _require_api_key(settings: Settings) -> None:
+    if not settings.gemini_api_key:
+        raise UsageError(NO_API_KEY)
+
+
+def _require_typesense(store, settings: Settings) -> None:
+    if not store.is_reachable():
+        raise UsageError(f"Typesense tidak bisa dihubungi di {settings.typesense_url}. Nyalakan container: docker start typesense")
+
+
+def _store(settings: Settings):
+    from hr_assistant.rag.store import TypesenseStore, make_typesense_client
+
+    return TypesenseStore(make_typesense_client(settings), settings.typesense_collection, settings.embedding_dim)
+
+
+def _embeddings(settings: Settings):
+    from hr_assistant.rag.embeddings import GeminiEmbeddings
+
+    return GeminiEmbeddings(settings.embedding_model, settings.embedding_dim, api_key=settings.gemini_api_key)
+
+
+def _log_run(settings: Settings, question: str, employee_id: str | None, result: AgentResult, latency_ms: int) -> None:
+    """Log run untuk sampling eval di production; kegagalannya tidak boleh menggagalkan jawaban."""
+    from hr_assistant.db.database import RunLogRepository, RunRecord
+
+    record = RunRecord(
+        question, employee_id, result.answer, result.route, result.stop_reason,
+        result.sources, result.to_dict()["steps"], latency_ms,
     )
-    async with Client(params) as mcp:
-        yield HRAgent(llm, mcp, retriever, max_steps=settings.max_steps)
+    try:
+        RunLogRepository(settings.database_url).log(record)
+    except Exception as error:
+        print(f"Log run tidak tersimpan: {_first_line(error)}", file=sys.stderr)
+
+
+def _describe_service_error(error: BaseException) -> str | None:
+    import psycopg
+    from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
+
+    from hr_assistant.rag.embeddings import EmbeddingUnavailableError
+    from hr_assistant.rag.store import SearchUnavailableError
+
+    labels = (
+        (ChatGoogleGenerativeAIError, "LLM tidak tersedia"),
+        (EmbeddingUnavailableError, "Embedding Gemini tidak tersedia"),
+        (psycopg.OperationalError, "Postgres tidak bisa dihubungi"),
+        # This message already names Typesense.
+        (SearchUnavailableError, None),
+    )
+    for leaf in _leaves(error):
+        for error_type, label in labels:
+            if isinstance(leaf, error_type):
+                return f"{label}: {_first_line(leaf)}" if label else _first_line(leaf)
+    return None
+
+
+def _leaves(error: BaseException) -> list[BaseException]:
+    if isinstance(error, BaseExceptionGroup):
+        return [leaf for inner in error.exceptions for leaf in _leaves(inner)]
+    return [error, *([_leaves(error.__cause__)[0]] if error.__cause__ else [])]
+
+
+def _first_line(error: BaseException) -> str:
+    return (str(error).strip().splitlines() or [type(error).__name__])[0]
 
 
 async def _read_line(prompt: str) -> str:
@@ -184,29 +303,6 @@ async def _read_line(prompt: str) -> str:
 
     threading.Thread(target=read, daemon=True).start()
     return await future
-
-
-def _require_question(question: str) -> str:
-    if not question.strip():
-        raise UsageError(EMPTY_QUESTION)
-    return question.strip()
-
-
-def _ready_settings() -> Settings:
-    settings = load_settings()
-    if not _index_ready(settings):
-        raise UsageError(NO_INDEX)
-    if not settings.gemini_api_key:
-        raise UsageError(NO_API_KEY)
-    return settings
-
-
-def _index_ready(settings: Settings) -> bool:
-    if not settings.index_dir.exists():
-        return False
-    from hr_assistant.vector_store import ChromaStore
-
-    return ChromaStore(settings.index_dir, settings.collection).count() > 0
 
 
 def _print_answer(result: AgentResult) -> None:

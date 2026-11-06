@@ -4,7 +4,9 @@
     "question": "Berapa hari jatah cuti tahunan karyawan tetap?",
     "employee_id": null,
     "expected_route": "rag",
-    "must_contain": ["12 hari"],
+    "must_contain": [
+      "12 hari"
+    ],
     "expected_source": "kebijakan_cuti.md#Kebijakan Cuti > Cuti Tahunan"
   },
   {
@@ -12,7 +14,9 @@
     "question": "Berapa lama cuti melahirkan?",
     "employee_id": null,
     "expected_route": "rag",
-    "must_contain": ["3 bulan"],
+    "must_contain": [
+      "3 bulan"
+    ],
     "expected_source": "kebijakan_cuti.md#Kebijakan Cuti > Cuti Melahirkan dan Cuti Ayah"
   },
   {
@@ -20,7 +24,9 @@
     "question": "Dalam seminggu boleh kerja dari rumah berapa hari?",
     "employee_id": null,
     "expected_route": "rag",
-    "must_contain": ["2 hari"],
+    "must_contain": [
+      "2 hari"
+    ],
     "expected_source": "kerja_remote.md#Kebijakan Kerja Remote > Ketentuan Umum"
   },
   {
@@ -28,7 +34,9 @@
     "question": "Berapa lama batas waktu mengajukan klaim reimbursement?",
     "employee_id": null,
     "expected_route": "rag",
-    "must_contain": ["30 hari"],
+    "must_contain": [
+      "30 hari"
+    ],
     "expected_source": "reimbursement.md#Kebijakan Reimbursement > Batas Waktu Pengajuan"
   },
   {
@@ -36,7 +44,9 @@
     "question": "Tanggal berapa gaji dibayarkan?",
     "employee_id": null,
     "expected_route": "rag",
-    "must_contain": ["25"],
+    "must_contain": [
+      "25"
+    ],
     "expected_source": "faq_karyawan.md#FAQ Karyawan > Kapan gaji dibayarkan?"
   },
   {
@@ -44,15 +54,29 @@
     "question": "Lembur di hari libur dibayar berapa kali upah per jam?",
     "employee_id": null,
     "expected_route": "rag",
-    "must_contain": ["2 kali"],
+    "must_contain": [
+      "2 kali"
+    ],
     "expected_source": "absensi_lembur.md#Absensi dan Lembur > Lembur"
+  },
+  {
+    "id": "rag-perjalanan-dinas-pdf",
+    "question": "Berapa uang harian perjalanan dinas untuk staf?",
+    "employee_id": null,
+    "expected_route": "rag",
+    "must_contain": [
+      "350.000"
+    ],
+    "expected_source": "pedoman_perjalanan_dinas.pdf#pedoman_perjalanan_dinas"
   },
   {
     "id": "tool-sisa-cuti",
     "question": "Sisa cuti tahunan saya berapa?",
     "employee_id": "E001",
     "expected_route": "tool",
-    "must_contain": ["7"],
+    "must_contain": [
+      "7"
+    ],
     "expected_source": null
   },
   {
@@ -60,16 +84,42 @@
     "question": "Siapa saja bawahan langsung saya?",
     "employee_id": "E001",
     "expected_route": "tool",
-    "must_contain": ["Budi", "Sari"],
+    "must_contain": [
+      "Budi",
+      "Sari"
+    ],
     "expected_source": null
   },
   {
     "id": "tool-id-tidak-ada",
-    "question": "Berapa sisa cuti karyawan dengan ID E999?",
-    "employee_id": null,
+    "question": "Sisa cuti tahunan saya berapa?",
+    "employee_id": "E999",
     "expected_route": "tool",
-    "must_contain": ["E999"],
+    "must_contain": [
+      "E999"
+    ],
     "expected_source": null
+  },
+  {
+    "id": "akses-data-rekan-ditolak",
+    "question": "Berapa sisa cuti karyawan E002?",
+    "employee_id": "E003",
+    "expected_route": "tool",
+    "must_contain": [
+      "E002"
+    ],
+    "expected_source": null
+  },
+  {
+    "id": "mixed-sisa-dan-carry-over",
+    "question": "Sisa cuti tahunan saya berapa, dan sisa cuti boleh dibawa ke tahun depan maksimal berapa hari?",
+    "employee_id": "E001",
+    "expected_route": "rag",
+    "must_contain": [
+      "7",
+      "5 hari"
+    ],
+    "expected_source": "kebijakan_cuti.md#Kebijakan Cuti > Carry Over Cuti"
   },
   {
     "id": "unknown-gaji-direktur",
@@ -90,6 +140,14 @@
   {
     "id": "unknown-kendaraan-dinas",
     "question": "Apa kebijakan perusahaan soal kendaraan dinas?",
+    "employee_id": null,
+    "expected_route": "unknown",
+    "must_contain": [],
+    "expected_source": null
+  },
+  {
+    "id": "unknown-bonus-tahunan",
+    "question": "Berapa bonus tahunan karyawan?",
     "employee_id": null,
     "expected_route": "unknown",
     "must_contain": [],

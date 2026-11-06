@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from hr_assistant.agent import UNKNOWN_ANSWER, AgentResult, HRAgent
+from hr_assistant.agent import UNKNOWN_ANSWER
+from hr_assistant.agent.graph import AgentResult, HRAgent
 
 CHECKS = ("route", "contains", "source", "refusal")
 
@@ -53,7 +54,8 @@ def score_case(case: EvalCase, result: AgentResult) -> CaseScore:
         route_ok = result.route == "none"
     else:
         route_ok = result.route in (case.expected_route, "mixed")
-    answer = result.answer.lower()
+    # Gemini formats answers in Markdown, so bold markers are stripped before matching facts.
+    answer = result.answer.replace("*", "").lower()
     checks = {
         "route": route_ok,
         "contains": all(term.lower() in answer for term in case.must_contain),
