@@ -43,6 +43,20 @@ async def test_tools_listed_with_exact_names():
     assert all(t.input_schema["required"] == ["employee_id"] for t in tools)
 
 
+async def test_unknown_employee_does_not_log_to_stderr(tmp_path):
+    from mcp import ClientSession, stdio_client
+
+    params = StdioServerParameters(command=sys.executable, args=["-m", "hr_assistant.mcp_server"])
+    errlog_path = tmp_path / "stderr.txt"
+    with errlog_path.open("w", encoding="utf-8") as errlog:
+        async with stdio_client(params, errlog=errlog) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                res = await session.call_tool("get_leave_balance", {"employee_id": "E999"})
+    assert res.is_error
+    assert errlog_path.read_text(encoding="utf-8").strip() == ""
+
+
 async def test_stdio_transport_roundtrip():
     params = StdioServerParameters(command=sys.executable, args=["-m", "hr_assistant.mcp_server"])
     async with Client(params) as client:

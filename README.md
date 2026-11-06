@@ -13,7 +13,7 @@ Dokumen HR di `data/docs/` dan data karyawan di `data/employees.json` adalah con
 | 3. MCP server dengan `get_leave_balance` dan `get_subordinat_list` | `src/hr_assistant/mcp_server.py` |
 | 4. Agent dengan tool calling lewat MCP, guardrail, harness dan loop | `src/hr_assistant/agent.py`, `llm.py`, `prompts.py`, `evals.py` |
 | 5. Dokumentasi | README ini |
-| Test otomatis | `tests/` (60 test, tanpa jaringan) |
+| Test otomatis | `tests/` (61 test, tanpa jaringan) |
 
 ## Setup
 
@@ -139,14 +139,21 @@ Eval harness di repo ini adalah titik awal. Untuk production, eval berikut perlu
 
 ## Status verifikasi
 
-- 60 test otomatis lulus (`pytest -q`). Test tidak memakai jaringan: embedder palsu, LLM skrip, dan MCP server in-process. Satu test menjalankan MCP server sungguhan lewat stdio.
-- `ingest` sudah dijalankan dengan model embedding sungguhan: 22 chunk dari 5 dokumen.
-- Jalur CLI sampai Gemini sudah diuji dengan key yang sengaja salah. Agent menyalakan MCP server lewat stdio, memuat embedder, memanggil Gemini, lalu menampilkan error satu baris: `LLM tidak tersedia: 400 INVALID_ARGUMENT: API key not valid.`
-- Demo dengan key Gemini asli dan hasil `eval` belum dijalankan, karena key belum tersedia saat repo ini dibuat.
+Diuji pada 6 November 2026 dengan `gemini-3.8-flash` dan key Gemini gratis.
+
+- 61 test otomatis lulus (`pytest -q`). Test tidak memakai jaringan: embedder palsu, LLM skrip, dan MCP server in-process. Dua test menjalankan MCP server sungguhan lewat stdio.
+- `ingest` dengan model embedding sungguhan: 22 chunk dari 5 dokumen.
+- Eval harness dengan Gemini asli: **12/12 lulus**, dengan cek rute, isi, sumber, dan penolakan masing-masing 100%. Laporan lengkap ditulis ke `logs/eval_report.json`.
+- Contoh jawaban dari uji live:
+  - "Berapa jatah cuti tahunan?" dijawab "12 hari kerja per tahun" dengan sitasi `kebijakan_cuti.md#Kebijakan Cuti > Cuti Tahunan`.
+  - "Sisa cuti saya berapa?" dengan `--employee-id E001` dijawab "7 hari (dari total kuota 12 hari, telah digunakan 5 hari)" lewat `get_leave_balance`.
+  - "Berapa sisa cuti karyawan dengan ID E999?" dijawab "Karyawan dengan ID E999 tidak ditemukan."
+  - "Berapa gaji direktur utama?" dijawab "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
 
 ## Keterbatasan
 
 - Data karyawan adalah dummy di berkas JSON, tanpa autentikasi. Di production, ID karyawan harus diambil dari sesi login, bukan dari argumen yang bisa diisi siapa saja, dan MCP server harus memeriksa bahwa penanya hanya boleh melihat datanya sendiri atau data bawahannya.
 - Guardrail memeriksa sitasi dan angka, belum memeriksa kebenaran isi kalimat (lihat Trade-off).
 - Pertanyaan lanjutan di mode `chat` belum membawa riwayat percakapan sebelumnya. Setiap pertanyaan diproses sendiri.
+- Peringkat retrieval belum selalu tepat. Pada uji live, bagian Cuti Tahunan berada di urutan ke-4 dari 4 hasil untuk pertanyaan "Berapa jatah cuti tahunan?", di bawah Carry Over Cuti. Jawabannya tetap benar karena `top_k=4`, tetapi reranker atau hybrid search (BM25 + vektor) akan membuatnya lebih andal.
 - Index dibangun ulang penuh setiap `ingest`. Untuk dokumen yang sering berubah, perlu ingest inkremental berdasarkan hash berkas.

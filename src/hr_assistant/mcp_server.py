@@ -10,6 +10,8 @@ from hr_assistant.config import load_settings
 server = MCPServer(
     "hr-tools",
     instructions="Tool data karyawan: sisa cuti dan daftar bawahan. Data ini dummy untuk demo.",
+    # The CLI shares a terminal with this subprocess; INFO logs for expected tool errors read as crashes.
+    log_level="WARNING",
 )
 
 
