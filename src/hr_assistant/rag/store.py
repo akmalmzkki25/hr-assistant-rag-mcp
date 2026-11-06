@@ -4,6 +4,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import hashlib
+import json
+from typing import Literal
+
 import httpx
 import typesense
 from langchain_core.documents import Document
@@ -14,8 +18,22 @@ from hr_assistant.config import Settings
 VECTOR_POOL = 100
 
 
+def document_id(chunk_id: str) -> str:
+    """ID dokumen Typesense yang aman di URL: chunk_id berisi path berkas, dan "/" membuat hapus per ID salah alamat."""
+    return hashlib.sha1(chunk_id.encode()).hexdigest()
+
+
 class SearchUnavailableError(RuntimeError):
     """Typesense mati atau menolak query saat agent mencari dokumen."""
+
+
+@dataclass(frozen=True)
+class ChunkRecord:
+    """Ringkasan satu chunk yang sudah ter-index, tanpa teks dan vektornya."""
+
+    id: str
+    source: str
+    content_hash: str
 
 
 @dataclass(frozen=True)
@@ -62,10 +80,37 @@ class TypesenseStore:
                     {"name": "source", "type": "string", "facet": True},
                     {"name": "section", "type": "string"},
                     {"name": "chunk_id", "type": "string"},
+                    {"name": "content_hash", "type": "string"},
                     {"name": "embedding", "type": "float[]", "num_dim": self.dim},
                 ],
             }
         )
+
+    def schema_state(self) -> Literal["missing", "current", "outdated"]:
+        """outdated: collection dari versi lama (tanpa content_hash) atau dimensi embedding berbeda."""
+        try:
+            fields = {f["name"]: f for f in self._client.collections[self.collection].retrieve()["fields"]}
+        except ObjectNotFound:
+            return "missing"
+        embedding = fields.get("embedding", {})
+        return "current" if "content_hash" in fields and embedding.get("num_dim") == self.dim else "outdated"
+
+    def indexed_chunks(self) -> list[ChunkRecord]:
+        try:
+            exported = self._client.collections[self.collection].documents.export({"include_fields": "id,source,content_hash"})
+        except ObjectNotFound:
+            return []
+        rows = [json.loads(line) for line in exported.splitlines() if line.strip()]
+        return [ChunkRecord(row["id"], row.get("source", ""), row.get("content_hash", "")) for row in rows]
+
+    def delete_ids(self, ids: Sequence[str]) -> None:
+        # Deleting by ID avoids filter_by quoting, which breaks on file names containing a backtick.
+        documents = self._client.collections[self.collection].documents
+        for chunk_id in ids:
+            try:
+                documents[chunk_id].delete()
+            except ObjectNotFound:
+                pass
 
     def drop(self) -> None:
         try:
@@ -76,11 +121,12 @@ class TypesenseStore:
     def upsert(self, docs: Sequence[Document], vectors: Sequence[Sequence[float]]) -> None:
         records = [
             {
-                "id": doc.metadata["chunk_id"],
+                "id": document_id(doc.metadata["chunk_id"]),
                 "content": doc.page_content,
                 "source": doc.metadata["source"],
                 "section": doc.metadata["section"],
                 "chunk_id": doc.metadata["chunk_id"],
+                "content_hash": doc.metadata.get("content_hash", ""),
                 "embedding": list(vector),
             }
             for doc, vector in zip(docs, vectors, strict=True)

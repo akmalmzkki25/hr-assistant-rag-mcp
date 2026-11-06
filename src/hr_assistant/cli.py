@@ -49,7 +49,9 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(required=True)
 
     commands.add_parser("db-init", help="Buat database dan jalankan migrasi Alembic.").set_defaults(handler=_cmd_db_init)
-    commands.add_parser("ingest", help="Baca dokumen HR dan buat index di Typesense.").set_defaults(handler=_cmd_ingest)
+    ingest = commands.add_parser("ingest", help="Index dokumen HR ke Typesense. Default: hanya dokumen baru atau berubah.")
+    ingest.add_argument("--full", action="store_true", help="Hapus index lalu embed ulang semua dokumen.")
+    ingest.set_defaults(handler=_cmd_ingest)
 
     ask = commands.add_parser("ask", help="Ajukan satu pertanyaan.")
     ask.add_argument("question")
@@ -78,8 +80,8 @@ def _cmd_db_init(args: argparse.Namespace) -> int:
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
+    from hr_assistant.rag import ingest
     from hr_assistant.rag.chunking import split_documents
-    from hr_assistant.rag.ingest import build_index
     from hr_assistant.rag.loader import load_documents
 
     settings = get_settings()
@@ -91,9 +93,29 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     _require_api_key(settings)
     store = _store(settings)
     _require_typesense(store, settings)
-    count = build_index(settings.docs_dir, store, _embeddings(settings))
-    print(f"Index dibuat: {count} chunk dari {len(documents)} dokumen.")
+    # Changing the embedding model or dimension changes this, so every document is re-embedded.
+    fingerprint = f"{settings.embedding_model}:{settings.embedding_dim}"
+    if args.full:
+        count = ingest.build_index(settings.docs_dir, store, _embeddings(settings), fingerprint=fingerprint)
+        print(f"Index dibuat ulang: {count} chunk dari {len(documents)} dokumen.")
+        return 0
+    _print_sync_report(ingest.sync_index(settings.docs_dir, store, _embeddings(settings), fingerprint=fingerprint))
     return 0
+
+
+def _print_sync_report(report) -> None:
+    if report.rebuilt:
+        print("Index dari versi lama, jadi dibuat ulang penuh.")
+    if not (report.rebuilt or report.added or report.updated or report.removed):
+        print(f"Index sudah terbaru: {len(report.unchanged)} dokumen, tidak ada yang di-embed ulang.")
+        return
+    print(
+        f"Index diperbarui: {len(report.added)} baru, {len(report.updated)} berubah, {len(report.removed)} dihapus, "
+        f"{len(report.unchanged)} tetap. {report.embedded_chunks} chunk di-embed."
+    )
+    for label, sources in (("baru", report.added), ("berubah", report.updated), ("dihapus", report.removed)):
+        for source in sources:
+            print(f"  {label}: {source}")
 
 
 def _cmd_ask(args: argparse.Namespace) -> int:

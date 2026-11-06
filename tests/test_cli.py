@@ -190,3 +190,54 @@ def test_chat_exit_words_end_session(word, ready, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_read_line", fake_read_line)
     assert cli.main(["chat"]) == 0
     assert asked == []
+
+
+@pytest.fixture
+def ingest_ready(monkeypatch, sample_docs):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setenv("HR_DOCS_DIR", str(sample_docs))
+    monkeypatch.setattr(cli, "_require_typesense", lambda store, settings: None)
+
+
+def test_ingest_syncs_only_changes_by_default(ingest_ready, monkeypatch, capsys):
+    from hr_assistant.rag.ingest import SyncReport
+
+    seen = {}
+
+    def fake_sync(docs_dir, store, embeddings, fingerprint=""):
+        seen["fingerprint"] = fingerprint
+        return SyncReport(added=["baru.md"], updated=["kebijakan_cuti.md"], removed=["lama.md"], unchanged=["kerja_remote.md"], embedded_chunks=3)
+
+    monkeypatch.setattr("hr_assistant.rag.ingest.sync_index", fake_sync)
+    assert cli.main(["ingest"]) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "Index diperbarui: 1 baru, 1 berubah, 1 dihapus, 1 tetap. 3 chunk di-embed.",
+        "  baru: baru.md",
+        "  berubah: kebijakan_cuti.md",
+        "  dihapus: lama.md",
+    ]
+    assert seen["fingerprint"] == "gemini-embedding-2:768"
+
+
+def test_ingest_without_changes_says_up_to_date(ingest_ready, monkeypatch, capsys):
+    from hr_assistant.rag.ingest import SyncReport
+
+    report = SyncReport(unchanged=["kebijakan_cuti.md", "kerja_remote.md"])
+    monkeypatch.setattr("hr_assistant.rag.ingest.sync_index", lambda *a, **k: report)
+    assert cli.main(["ingest"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["Index sudah terbaru: 2 dokumen, tidak ada yang di-embed ulang."]
+
+
+def test_ingest_full_rebuilds_everything(ingest_ready, monkeypatch, capsys):
+    monkeypatch.setattr("hr_assistant.rag.ingest.build_index", lambda *a, **k: 3)
+    assert cli.main(["ingest", "--full"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["Index dibuat ulang: 3 chunk dari 2 dokumen."]
+
+
+def test_rebuild_report_never_says_up_to_date(ingest_ready, monkeypatch, capsys):
+    from hr_assistant.rag.ingest import SyncReport
+
+    monkeypatch.setattr("hr_assistant.rag.ingest.sync_index", lambda *a, **k: SyncReport(rebuilt=True))
+    assert cli.main(["ingest"]) == 0
+    out = capsys.readouterr().out
+    assert "dibuat ulang" in out and "sudah terbaru" not in out

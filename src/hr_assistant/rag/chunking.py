@@ -7,11 +7,16 @@ from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 HEADER_LEVELS = [("#", "h1"), ("##", "h2"), ("###", "h3")]
+CHUNK_SIZE = 1200
+CHUNK_OVERLAP = 150
 _HEADING_LINE = re.compile(r"^#{1,3}\s+\S", re.MULTILINE)
 
 
-def split_documents(docs: list[Document], chunk_size: int = 1200, chunk_overlap: int = 150) -> list[Document]:
-    sizer = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+def split_documents(docs: list[Document], chunk_size: int | None = None, chunk_overlap: int | None = None) -> list[Document]:
+    sizer = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE if chunk_size is None else chunk_size,
+        chunk_overlap=CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap,
+    )
     chunks: list[Document] = []
     for doc in docs:
         source = doc.metadata["source"]
