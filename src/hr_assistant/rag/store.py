@@ -4,13 +4,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import httpx
 import typesense
 from langchain_core.documents import Document
-from typesense.exceptions import ObjectNotFound
+from typesense.exceptions import ObjectNotFound, TypesenseClientError
 
 from hr_assistant.config import Settings
 
 VECTOR_POOL = 100
+
+
+class SearchUnavailableError(RuntimeError):
+    """Typesense mati atau menolak query saat agent mencari dokumen."""
 
 
 @dataclass(frozen=True)
@@ -97,9 +102,14 @@ class TypesenseStore:
             "per_page": k,
         }
         # multi_search sends the vector in the POST body; a 768-dim vector is too long for a GET query string.
-        result = self._client.multi_search.perform({"searches": [search]}, {})["results"][0]
+        try:
+            result = self._client.multi_search.perform({"searches": [search]}, {})["results"][0]
+        except httpx.TransportError as error:
+            raise SearchUnavailableError(f"Typesense tidak bisa dihubungi: {error}. Nyalakan container: docker start typesense") from error
+        except TypesenseClientError as error:
+            raise SearchUnavailableError(f"Pencarian Typesense gagal: {error}") from error
         if "error" in result:
-            raise RuntimeError(f"Pencarian Typesense gagal: {result['error']}")
+            raise SearchUnavailableError(f"Pencarian Typesense gagal: {result['error']}")
         return [_to_hit(hit) for hit in result.get("hits", [])]
 
     def count(self) -> int:

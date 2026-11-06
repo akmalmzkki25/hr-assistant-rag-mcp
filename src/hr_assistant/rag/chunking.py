@@ -39,5 +39,7 @@ def _sections(text: str, source: str) -> list[tuple[str, str]]:
         body = part.page_content.strip()
         # Text before the first heading (a document disclaimer) has no titles and is not HR content.
         if titles and body:
-            sections.append((" > ".join(titles), body))
+            # The citation format [sumber: ...] ends at the first "]", so brackets in a title would break it.
+            title = " > ".join(titles).translate(str.maketrans("[]", "()"))
+            sections.append((title, body))
     return sections

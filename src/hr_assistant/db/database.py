@@ -13,6 +13,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from sqlalchemy.engine import URL
 
+from hr_assistant.errors import SetupError
+
 # Without a timeout, a connection to a stopped Postgres on Windows waits about four minutes before failing.
 CONNECT_TIMEOUT_SECONDS = 5
 
@@ -45,7 +47,9 @@ def sqlalchemy_url(database_url: str | None = None) -> str:
 
 def init_database(database_url: str) -> None:
     """Buat database kalau belum ada, lalu jalankan migrasi sampai head. Aman dijalankan berulang."""
-    dbname = conninfo_to_dict(database_url)["dbname"]
+    dbname = conninfo_to_dict(database_url).get("dbname")
+    if not dbname:
+        raise SetupError("DATABASE_URL harus menyebut nama database, misalnya postgresql://postgres:<password>@localhost:5432/hr_assistant")
     with connect(with_database(database_url, "postgres"), autocommit=True) as admin:
         exists = admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,)).fetchone()
         if not exists:

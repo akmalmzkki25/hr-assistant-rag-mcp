@@ -39,13 +39,24 @@ class FakeToolChatModel(BaseChatModel):
         return "fake-tool-chat"
 
     def bind_tools(self, tools, **kwargs):
-        self._tool_names = [t.name for t in tools]
-        return self
+        return _BoundFake(self, [t.name for t in tools])
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
         self._calls.append(list(messages))
         assert self._responses, "FakeToolChatModel kehabisan balasan"
         return ChatResult(generations=[ChatGeneration(message=self._responses.pop(0))])
+
+
+class _BoundFake:
+    """Hasil bind_tools: mencatat daftar tool yang benar-benar ditawarkan pada panggilan terakhir."""
+
+    def __init__(self, model: FakeToolChatModel, names: list[str]):
+        self.model = model
+        self.names = names
+
+    async def ainvoke(self, messages, config=None, **kwargs):
+        self.model._tool_names = self.names
+        return await self.model.ainvoke(messages, config, **kwargs)
 
 
 def call(name: str, **args) -> AIMessage:

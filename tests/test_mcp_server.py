@@ -62,3 +62,11 @@ async def test_stdio_roundtrip_without_stderr_noise(tmp_path, test_database_url)
     assert json.loads(ok.content[0].text)["annual_remaining"] == 2
     assert missing.isError
     assert errlog_path.read_text(encoding="utf-8").strip() == ""
+
+
+async def test_postgres_down_is_a_clean_tool_error(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:x@127.0.0.1:9/hr_assistant")
+    res = await call("get_leave_balance", {"employee_id": "E001"})
+    assert res.isError
+    assert "Database karyawan tidak bisa dihubungi" in res.content[0].text
+    assert "127.0.0.1" not in res.content[0].text

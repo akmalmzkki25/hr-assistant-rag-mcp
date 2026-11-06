@@ -43,7 +43,7 @@ def test_mixed_route_satisfies_rag_and_tool():
 
 def test_cases_file_is_valid():
     cases = load_cases(ROOT / "evals" / "cases.json")
-    assert len(cases) == 15
+    assert len(cases) == 16
     assert {c.expected_route for c in cases} == {"rag", "tool", "unknown"}
     assert all(c.expected_source for c in cases if c.expected_route == "rag")
 

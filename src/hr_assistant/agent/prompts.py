@@ -1,6 +1,7 @@
 """Teks prompt untuk agent HR."""
 
 UNKNOWN_ANSWER = "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
+ASK_EMPLOYEE_ID = "Sebutkan dulu ID karyawan kamu, misalnya lewat --employee-id, supaya saya bisa mengecek data cuti atau bawahanmu."
 
 SYSTEM_PROMPT = f"""Kamu asisten HR internal yang menjawab pertanyaan karyawan dalam Bahasa Indonesia.
 

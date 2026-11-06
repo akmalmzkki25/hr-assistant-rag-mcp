@@ -14,14 +14,16 @@ from uuid import uuid4
 
 from hr_assistant.agent.graph import AgentResult, HRAgent
 from hr_assistant.config import PROJECT_ROOT, Settings, get_settings
+from hr_assistant.errors import SetupError
 
 NO_INDEX = "Index belum dibuat. Jalankan: python -m hr_assistant ingest"
 NO_API_KEY = "GEMINI_API_KEY belum diisi. Salin .env.example ke .env lalu isi key."
 EMPTY_QUESTION = "Pertanyaan tidak boleh kosong."
 
 
-class UsageError(Exception):
-    """Kesalahan input atau setup yang bisa diperbaiki pengguna (exit code 2)."""
+EXIT_WORDS = {"keluar", "exit", "quit"}
+
+UsageError = SetupError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -121,13 +123,13 @@ def _cmd_chat(args: argparse.Namespace) -> int:
 
     async def run() -> None:
         async with open_agent(settings) as agent:
-            print("Ketik pertanyaan. Kosongkan lalu Enter untuk keluar.")
+            print("Ketik pertanyaan. Ketik keluar, atau kosongkan lalu Enter, untuk selesai.")
             while True:
                 try:
                     question = (await _read_line("Kamu: ")).strip()
                 except EOFError:
                     return
-                if not question:
+                if not question or question.casefold() in EXIT_WORDS:
                     return
                 started = time.monotonic()
                 result = await agent.ask(question, employee_id=args.employee_id, thread_id=thread_id)
@@ -238,16 +240,19 @@ def _describe_service_error(error: BaseException) -> str | None:
     from langchain_google_genai.chat_models import ChatGoogleGenerativeAIError
 
     from hr_assistant.rag.embeddings import EmbeddingUnavailableError
+    from hr_assistant.rag.store import SearchUnavailableError
 
     labels = (
         (ChatGoogleGenerativeAIError, "LLM tidak tersedia"),
         (EmbeddingUnavailableError, "Embedding Gemini tidak tersedia"),
         (psycopg.OperationalError, "Postgres tidak bisa dihubungi"),
+        # This message already names Typesense.
+        (SearchUnavailableError, None),
     )
     for leaf in _leaves(error):
         for error_type, label in labels:
             if isinstance(leaf, error_type):
-                return f"{label}: {_first_line(leaf)}"
+                return f"{label}: {_first_line(leaf)}" if label else _first_line(leaf)
     return None
 
 

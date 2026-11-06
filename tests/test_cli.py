@@ -149,3 +149,44 @@ def test_ctrl_c_returns_130(monkeypatch, capsys):
 def test_read_line_returns_typed_text(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt: "halo")
     assert asyncio.run(cli._read_line("Kamu: ")) == "halo"
+
+
+def test_search_unavailable_during_ask_prints_one_line(ready, monkeypatch, capsys):
+    from hr_assistant.rag.store import SearchUnavailableError
+
+    use_agent(monkeypatch, FakeAgent(error=SearchUnavailableError("Typesense tidak bisa dihubungi: connection refused")))
+    assert cli.main(["ask", "Berapa cuti?"]) == 1
+    assert stderr_lines(capsys) == ["Typesense tidak bisa dihubungi: connection refused"]
+
+
+def test_database_url_without_name_exits_2(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://postgres:x@127.0.0.1:9")
+    assert cli.main(["db-init"]) == 2
+    assert "DATABASE_URL" in stderr_lines(capsys)[0]
+
+
+def test_corrupt_document_exits_2(tmp_path, monkeypatch, capsys):
+    (tmp_path / "rusak.pdf").write_bytes(b"bukan pdf")
+    monkeypatch.setenv("HR_DOCS_DIR", str(tmp_path))
+    assert cli.main(["ingest"]) == 2
+    assert "rusak.pdf" in stderr_lines(capsys)[0]
+
+
+@pytest.mark.parametrize("word", ["keluar", "exit", "Quit"])
+def test_chat_exit_words_end_session(word, ready, monkeypatch, capsys):
+    asked = []
+
+    class RecordingAgent(FakeAgent):
+        async def ask(self, question, employee_id=None, thread_id=None):
+            asked.append(question)
+            return AgentResult("ok", "none", "final")
+
+    lines = iter([word, "pertanyaan yang tidak boleh terkirim"])
+
+    async def fake_read_line(prompt):
+        return next(lines)
+
+    use_agent(monkeypatch, RecordingAgent())
+    monkeypatch.setattr(cli, "_read_line", fake_read_line)
+    assert cli.main(["chat"]) == 0
+    assert asked == []

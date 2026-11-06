@@ -1,5 +1,6 @@
 """MCP server berisi tool data karyawan dari Postgres. Jalankan: python -m hr_assistant.mcp_server"""
 
+import psycopg
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
@@ -12,6 +13,9 @@ server = FastMCP(
     instructions="Tool data karyawan: sisa cuti dan daftar bawahan. Data ini dummy untuk demo.",
     log_level="WARNING",
 )
+
+
+DATABASE_DOWN = "Database karyawan tidak bisa dihubungi. Coba lagi nanti."
 
 
 def _repository() -> EmployeeRepository:
@@ -30,7 +34,11 @@ def get_leave_balance(employee_id: str) -> dict:
     employee_id adalah ID karyawan, contoh "E001".
     """
     wanted = employee_id.strip().upper()
-    balance = _repository().leave_balance(wanted)
+    try:
+        balance = _repository().leave_balance(wanted)
+    except psycopg.OperationalError as error:
+        # The connection string (host, user) stays out of the message the model and the user see.
+        raise ToolError(DATABASE_DOWN) from error
     if balance is None:
         raise _not_found(wanted)
     return balance
@@ -45,10 +53,14 @@ def get_subordinat_list(employee_id: str) -> dict:
     """
     wanted = employee_id.strip().upper()
     repository = _repository()
-    manager = repository.employee(wanted)
+    try:
+        manager = repository.employee(wanted)
+        subordinates = repository.subordinates(wanted) if manager else []
+    except psycopg.OperationalError as error:
+        raise ToolError(DATABASE_DOWN) from error
     if manager is None:
         raise _not_found(wanted)
-    return {"employee_id": manager["employee_id"], "name": manager["name"], "subordinates": repository.subordinates(wanted)}
+    return {"employee_id": manager["employee_id"], "name": manager["name"], "subordinates": subordinates}
 
 
 def main() -> None:

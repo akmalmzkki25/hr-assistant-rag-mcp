@@ -58,3 +58,9 @@ def test_sample_pdf_is_loaded_and_chunked():
     chunks = split_documents(pdf_docs)
     assert chunks and chunks[0].metadata["section"] == "pedoman_perjalanan_dinas"
     assert "uang harian" in " ".join(c.page_content for c in chunks).lower()
+
+
+def test_brackets_in_heading_do_not_break_citation_format():
+    doc = Document(page_content="# Reimbursement [2025]\n\nKlaim maksimal 30 hari.", metadata={"source": "r.md"})
+    section = split_documents([doc])[0].metadata["section"]
+    assert "[" not in section and "]" not in section and "2025" in section

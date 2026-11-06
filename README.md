@@ -13,13 +13,13 @@ Dokumen HR di `data/docs/` dan data karyawan di migrasi seed adalah contoh fikti
 | 3. MCP server dengan `get_leave_balance` dan `get_subordinat_list` | `src/hr_assistant/mcp_server.py`, data di `src/hr_assistant/db/` |
 | 4. Agent dengan tool calling lewat MCP, guardrail, harness dan loop | `src/hr_assistant/agent/` (`graph.py`, `guardrail.py`, `tools.py`, `prompts.py`), `evals.py` |
 | 5. Dokumentasi | README ini |
-| Test otomatis | `tests/` (81 test: 48 unit tanpa servis, 33 integrasi dengan Postgres, Typesense, dan MCP stdio) |
+| Test otomatis | `tests/` (109 test: 70 unit tanpa servis, 39 integrasi dengan Postgres, Typesense, dan MCP stdio) |
 
 ## Stack
 
 | Komponen | Pilihan |
 |---|---|
-| LLM | Gemini `gemini-3.8-flash` lewat `langchain-google-genai` |
+| LLM | Gemini `gemini-3.1-flash-lite` lewat `langchain-google-genai` |
 | Harness agent | LangGraph `StateGraph` + `ToolNode`, memori chat dengan `InMemorySaver` |
 | Embedding | `gemini-embedding-2`, 768 dimensi |
 | Vector store | Typesense 0.25.2, hybrid search (kata kunci + vektor) |
@@ -58,7 +58,7 @@ Salin `.env.example` menjadi `.env`, lalu isi:
 - `TYPESENSE_API_KEY`: sama dengan `--api-key` di perintah Docker.
 - `DATABASE_URL`: misalnya `postgresql://postgres:ganti-password-postgres@localhost:5432/hr_assistant`.
 
-Model bisa diganti lewat `GEMINI_MODEL` (default `gemini-3.8-flash`) dan `EMBEDDING_MODEL` (default `gemini-embedding-2`). Di macOS atau Linux, ganti `.venv/Scripts/python.exe` dengan `.venv/bin/python` di semua perintah.
+Model bisa diganti lewat `GEMINI_MODEL` (default `gemini-3.1-flash-lite`) dan `EMBEDDING_MODEL` (default `gemini-embedding-2`). Di macOS atau Linux, ganti `.venv/Scripts/python.exe` dengan `.venv/bin/python` di semua perintah.
 
 ## Menjalankan
 
@@ -94,7 +94,7 @@ Pertanyaan dari dokumen PDF:
 .venv/Scripts/python.exe -m hr_assistant ask "Berapa uang harian perjalanan dinas untuk manajer?"
 ```
 
-Pertanyaan data pribadi (lewat MCP). ID karyawan dummy: `E001` (manager), `E002`, `E003`.
+Pertanyaan data pribadi (lewat MCP). ID karyawan dummy: `E001` (manager dari `E002` dan `E003`), `E002`, `E003`. Penanya hanya bisa melihat datanya sendiri dan data bawahan langsungnya, jadi `E003` yang menanyakan sisa cuti `E002` mendapat "Akses ditolak". Tanpa `--employee-id`, tool data karyawan tidak ditawarkan ke model dan agent meminta ID karyawan.
 
 ```bash
 .venv/Scripts/python.exe -m hr_assistant ask "Siapa saja bawahan saya?" --employee-id E001
@@ -108,7 +108,7 @@ Pertanyaan di luar dokumen, yang harus dijawab "tidak tahu":
 
 Tambahkan `--trace` untuk melihat setiap langkah agent (panggilan LLM dan tool) sebagai JSON.
 
-Mode interaktif dengan memori percakapan. Pertanyaan lanjutan seperti "kalau sisanya tidak terpakai?" memakai konteks giliran sebelumnya. Kosongkan baris lalu Enter untuk keluar.
+Mode interaktif dengan memori percakapan. Pertanyaan lanjutan seperti "kalau sisanya tidak terpakai?" memakai konteks giliran sebelumnya. Ketik `keluar`, atau kosongkan baris lalu Enter, untuk selesai.
 
 ```bash
 .venv/Scripts/python.exe -m hr_assistant chat --employee-id E001
@@ -116,7 +116,7 @@ Mode interaktif dengan memori percakapan. Pertanyaan lanjutan seperti "kalau sis
 
 Setiap run `ask` dan `chat` dicatat di tabel `agent_runs`. Kalau Postgres mati, jawaban tetap dicetak dan CLI hanya memberi peringatan bahwa log tidak tersimpan.
 
-Menjalankan eval harness (15 kasus, jeda 4 detik antar kasus untuk kuota gratis):
+Menjalankan eval harness (16 kasus, jeda 4 detik antar kasus untuk kuota gratis):
 
 ```bash
 .venv/Scripts/python.exe -m hr_assistant eval
@@ -140,11 +140,14 @@ CLI mencetak satu baris yang menyebut servis yang bermasalah, bukan traceback:
 
 | Pesan | Penyebab dan solusi |
 |---|---|
-| `Typesense tidak bisa dihubungi di ...` | Container mati. Jalankan `docker start typesense`. |
-| `Postgres tidak bisa dihubungi: ...` | Container mati atau `DATABASE_URL` salah. Jalankan `docker start postgres`. |
+| `Typesense tidak bisa dihubungi ...` | Container mati, sebelum atau di tengah pertanyaan. Jalankan `docker start typesense`. |
+| `Postgres tidak bisa dihubungi: ...` | Saat `db-init`: container mati atau `DATABASE_URL` salah. Jalankan `docker start postgres`. |
+| Jawaban "Database karyawan tidak bisa dihubungi" | Postgres mati saat MCP server mengambil data. Error ini lewat protokol MCP, jadi agent menyampaikannya sebagai jawaban. |
+| `DATABASE_URL harus menyebut nama database ...` | Tambahkan nama database di akhir URL, misalnya `/hr_assistant`. |
+| `Gagal membaca <berkas> ...` | Berkas di `data/docs/` rusak atau bukan UTF-8. Perbaiki atau keluarkan berkas itu. |
 | `Index belum dibuat ...` | Jalankan `ingest` dulu. |
 | `LLM tidak tersedia: ... 404 NOT_FOUND` | Model belum tersedia untuk key kamu. Isi `GEMINI_MODEL` dengan model yang ada di Google AI Studio, misalnya `gemini-2.5-flash`. |
-| `... 429 RESOURCE_EXHAUSTED` | Kuota gratis per menit habis. Tunggu sebentar lalu ulangi. Embedding dan LLM sudah mencoba ulang 3 kali dengan backoff. |
+| `... 429 RESOURCE_EXHAUSTED` | Kuota gratis per menit habis. Tunggu sebentar lalu ulangi. Embedding dan LLM sudah mencoba ulang 3 kali dengan backoff. Kalau kuota habis di tengah `ingest`, index lama tidak tersentuh, karena semua chunk di-embed dulu sebelum index dibuat ulang. |
 
 ## Arsitektur singkat
 
@@ -173,7 +176,7 @@ Agent mengirim pertanyaan ke Gemini bersama dua jenis tool: `search_hr_documents
 
 **Satu kali revisi sebelum "tidak tahu".** Kalau jawaban pertama tidak punya sitasi valid, agent diberi satu pesan koreksi. Ini memulihkan kasus model lupa menulis sitasi, dengan biaya satu panggilan LLM tambahan.
 
-**Guardrail berbasis sitasi dan angka.** Jawaban dari dokumen harus menunjuk chunk yang benar-benar diambil pada giliran itu. Jawaban dari tool MCP tanpa sitasi hanya lolos kalau setiap angka di dalamnya muncul di hasil tool, sehingga aturan karangan seperti "carry over maksimal 6 hari" ditolak. Guardrail ini belum memeriksa apakah isi kalimat benar-benar didukung chunk, dan angka yang ditulis dengan huruf ("dua kali") tidak ikut diperiksa. Pemeriksaan isi butuh LLM judge atau model NLI.
+**Guardrail berbasis sitasi dan angka.** Jawaban dari dokumen harus menunjuk chunk yang benar-benar diambil pada giliran itu. Setiap angka di jawaban, dengan atau tanpa sitasi, harus muncul sebagai angka utuh di chunk atau hasil MCP giliran itu, sehingga "carry over maksimal 6 hari" atau "7 hari" padahal datanya 17 ditolak. Jawaban dari tool MCP tanpa sitasi juga harus menyebut minimal satu nilai dari hasil tool (angka, nama, ID, atau pesan error), supaya kalimat bebas angka seperti "sisa cuti kamu masih banyak" tidak lolos. Guardrail ini belum memeriksa apakah isi kalimat benar-benar didukung chunk, dan angka yang ditulis dengan huruf ("dua kali") tidak ikut diperiksa. Pemeriksaan isi butuh LLM judge atau model NLI.
 
 **`mcp` 1.30, bukan 2.x.** `langchain-mcp-adapters` 0.3.2 belum mendukung `mcp` 2, jadi server memakai `FastMCP` dari `mcp` 1.30. Nama tool dan protokolnya sama.
 
@@ -185,8 +188,8 @@ Harness di sini adalah kerangka yang menjalankan, membatasi, dan memeriksa loop 
 
 1. **Loop agent terbatas.** Graph berputar antara node `agent` dan `tools` sampai model memberi jawaban final atau batas `max_steps` (6 panggilan LLM) tercapai. Kalau batas tercapai, node `finish` menjawab "tidak tahu" dengan `stop_reason=max_steps`, bukan menggantung. `recursion_limit` LangGraph dipasang di atas batas itu sebagai pengaman kedua.
 2. **Verifikasi lalu revisi.** Jawaban final masuk node `guardrail`. Kalau gagal, edge kembali ke `agent` dengan pesan koreksi, lalu diperiksa lagi. Revisi dibatasi satu kali.
-3. **Error tool dikembalikan ke model.** `ToolNode` dengan `handle_tool_errors=True` mengubah error MCP (misalnya ID `E999` tidak ditemukan) menjadi `ToolMessage` berstatus error, bukan menghentikan program. Model menyampaikan error itu ke pengguna.
-4. **Eval harness.** `python -m hr_assistant eval` menjalankan 15 kasus di `evals/cases.json` lewat graph yang sama, lalu menilai empat cek per kasus:
+3. **Error tool dipilah.** Error yang memang jawaban, seperti ID `E999` tidak ditemukan atau akses ditolak, dikembalikan ke model sebagai `ToolMessage` berstatus error, lalu model menyampaikannya. Error infrastruktur, seperti kuota embedding habis atau Typesense mati, tidak dikembalikan ke model. Error itu naik ke CLI dan dicetak sebagai satu baris, supaya tidak berubah menjadi jawaban "tidak tahu" yang menyesatkan dan tidak terhitung sebagai penolakan yang benar di eval.
+4. **Eval harness.** `python -m hr_assistant eval` menjalankan 16 kasus di `evals/cases.json` lewat graph yang sama, lalu menilai empat cek per kasus:
    - `route`: tool yang dipakai sesuai harapan (`rag`, `tool`, `mixed`, atau `none`)
    - `contains`: jawaban memuat fakta kunci
    - `source`: sitasi menunjuk bagian dokumen yang benar
@@ -208,22 +211,25 @@ Eval harness di repo ini adalah titik awal. Untuk production, eval berikut perlu
 
 ## Status verifikasi
 
-Diuji pada 6 November 2026 dengan `gemini-3.8-flash`, `gemini-embedding-2`, Typesense 0.25.2, dan Postgres 16.
+Diuji pada 6 November 2026 dengan `gemini-3.1-flash-lite`, `gemini-embedding-2`, Typesense 0.25.2, dan Postgres 16.
 
-- 81 test otomatis lulus (`pytest -q`, 42 detik). Test unit memakai embedder palsu dan LLM skrip. Test integrasi memakai Postgres dan Typesense sungguhan, serta MCP server lewat stdio.
+- 109 test otomatis lulus (`pytest -q`, sekitar 50 detik). Test unit memakai embedder palsu dan LLM skrip. Test integrasi memakai Postgres dan Typesense sungguhan, serta MCP server lewat stdio.
 - `db-init` dijalankan dua kali tanpa menggandakan data. `ingest`: 23 chunk dari 6 dokumen, termasuk satu PDF.
-- Eval harness dengan Gemini asli: **15/15 lulus**, dengan cek rute, isi, sumber, dan penolakan masing-masing 100%.
+- Eval harness dengan Gemini asli: **16/16 lulus**, dengan cek rute, isi, sumber, dan penolakan masing-masing 100%.
 - Contoh jawaban dari uji live:
   - "Berapa jatah cuti tahunan karyawan?" dijawab "12 hari kerja per tahun" dengan sitasi `kebijakan_cuti.md#Kebijakan Cuti > Cuti Tahunan`.
   - "Berapa uang harian perjalanan dinas untuk manajer?" dijawab "Rp500.000 per hari" dengan sitasi ke PDF `pedoman_perjalanan_dinas.pdf`.
   - "Siapa saja bawahan saya?" dengan `--employee-id E001` dijawab Budi Santoso (E002) dan Sari Lestari (E003) lewat `get_subordinat_list`.
   - "Berapa gaji CEO Majoo?" dijawab "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
+  - "Berapa sisa cuti karyawan E002?" dengan `--employee-id E003` dijawab "Akses ditolak: data karyawan E002 hanya bisa dilihat oleh E002 sendiri atau atasan langsungnya." Dengan `--employee-id E001` (atasan Budi), jawabannya 2 hari.
+  - "Sisa cuti saya berapa?" tanpa `--employee-id` dijawab dengan permintaan ID karyawan (4 dari 4 percobaan).
   - Di `chat`, "Berapa sisa cuti tahunan saya?" dijawab 7 hari, lalu pertanyaan lanjutan "Kalau sisanya tidak terpakai, boleh dibawa ke tahun depan berapa hari?" dijawab maksimal 5 hari dengan sitasi bagian Carry Over Cuti.
 
 ## Keterbatasan
 
 - Korpus contoh hanya 6 dokumen, jauh lebih kecil dari dokumen HR sungguhan yang bisa mencapai ratusan halaman. Pipeline-nya sama untuk korpus besar, tetapi ambang 0,70 dan `top_k=4` perlu dikalibrasi ulang dengan dokumen sungguhan.
-- Data karyawan adalah dummy tanpa autentikasi. Di production, ID karyawan harus diambil dari sesi login, bukan dari argumen yang bisa diisi siapa saja, dan MCP server harus memeriksa bahwa penanya hanya boleh melihat datanya sendiri atau data bawahannya.
+- Data karyawan adalah dummy tanpa autentikasi. Aturan akses (data sendiri dan bawahan langsung) sudah dijalankan di node `tools`, tetapi ID penanya masih diambil dari argumen `--employee-id` yang bisa diisi siapa saja. Di production, ID harus berasal dari sesi login, dan pemeriksaan akses sebaiknya juga ada di MCP server, supaya client lain tidak bisa melewatinya.
 - Guardrail memeriksa sitasi dan angka, belum memeriksa kebenaran isi kalimat (lihat Trade-off).
+- Jawaban yang sebagian benar tetapi juga memuat "tidak tahu" (tanpa data MCP) diganti seluruhnya dengan kalimat "tidak tahu" baku. Ini aman, tetapi bisa membuang bagian jawaban yang sebenarnya benar.
 - Index dibangun ulang penuh setiap `ingest`. Untuk dokumen yang sering berubah, perlu ingest inkremental berdasarkan hash berkas.
 - Memori chat hilang saat proses CLI ditutup (lihat Trade-off).

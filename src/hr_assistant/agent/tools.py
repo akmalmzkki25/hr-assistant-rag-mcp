@@ -1,4 +1,4 @@
-"""Tool RAG untuk agent: pencarian dokumen HR yang mengembalikan source_id sebagai artifact."""
+"""Tool RAG untuk agent: pencarian dokumen HR yang mengembalikan chunk sebagai artifact untuk guardrail."""
 
 import json
 from typing import Protocol
@@ -16,7 +16,7 @@ class Retriever(Protocol):
 
 def make_search_tool(retriever: Retriever) -> BaseTool:
     @tool(SEARCH_TOOL_NAME, response_format="content_and_artifact")
-    def search_hr_documents(query: str) -> tuple[str, list[str]]:
+    def search_hr_documents(query: str) -> tuple[str, dict[str, str]]:
         """Cari potongan dokumen kebijakan HR: cuti, kerja remote, reimbursement, absensi, lembur, perjalanan dinas, FAQ.
 
         Mengembalikan found dan daftar chunk berisi source_id, text, dan score. Pakai source_id persis untuk sitasi.
@@ -30,7 +30,8 @@ def make_search_tool(retriever: Retriever) -> BaseTool:
             }
             for hit in retriever.relevant(query)
         ]
-        # The artifact stays out of the model's context; the guardrail uses it to verify citations.
-        return json.dumps({"found": bool(chunks), "chunks": chunks}, ensure_ascii=False), [c["source_id"] for c in chunks]
+        # The artifact stays out of the model's context; the guardrail uses it to verify citations and numbers.
+        artifact = {c["source_id"]: c["text"] for c in chunks}
+        return json.dumps({"found": bool(chunks), "chunks": chunks}, ensure_ascii=False), artifact
 
     return search_hr_documents

@@ -10,6 +10,7 @@ from hr_assistant.agent import UNKNOWN_ANSWER
 from hr_assistant.agent.graph import HRAgent, build_graph
 from hr_assistant.agent.tools import make_search_tool
 from hr_assistant.mcp_server import server
+from hr_assistant.rag.embeddings import EmbeddingUnavailableError
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
@@ -25,9 +26,9 @@ async def mcp_tools(monkeypatch, test_database_url):
 
 @pytest.fixture
 def make_agent(mcp_tools):
-    def make(responses, max_steps=6):
+    def make(responses, max_steps=6, retriever=None):
         llm = FakeToolChatModel(responses)
-        tools = [make_search_tool(FakeRetriever())] + mcp_tools
+        tools = [make_search_tool(retriever or FakeRetriever())] + mcp_tools
         return HRAgent(build_graph(llm, tools, max_steps=max_steps, max_retries=1)), llm
 
     return make
@@ -47,8 +48,47 @@ async def test_policy_question_uses_rag_with_citation(make_agent):
 
 async def test_llm_gets_search_and_mcp_tools(make_agent):
     agent, llm = make_agent([final(UNKNOWN_ANSWER)])
-    await agent.ask("halo")
+    await agent.ask("halo", employee_id="E001")
     assert set(llm.tool_names) == {"search_hr_documents", "get_leave_balance", "get_subordinat_list"}
+
+
+async def test_without_employee_id_llm_gets_only_search(make_agent):
+    agent, llm = make_agent([final(UNKNOWN_ANSWER)])
+    await agent.ask("halo")
+    assert llm.tool_names == ["search_hr_documents"]
+
+
+async def test_mcp_call_without_requester_is_denied(make_agent):
+    agent, llm = make_agent([call("get_leave_balance", employee_id="E001"), final(UNKNOWN_ANSWER)])
+    await agent.ask("Sisa cuti E001?")
+    message = tool_messages(llm, 1)[-1]
+    assert message.status == "error" and "annual_remaining" not in str(message.content)
+
+
+async def test_employee_cannot_read_coworker_data(make_agent):
+    agent, llm = make_agent([call("get_leave_balance", employee_id="E002"), final("Akses ke data E002 ditolak.")])
+    res = await agent.ask("Sisa cuti E002?", employee_id="E003")
+    message = tool_messages(llm, 1)[-1]
+    assert message.status == "error" and "E002" in str(message.content)
+    assert "annual_remaining" not in str(message.content)
+    assert res.route == "tool"
+
+
+async def test_manager_can_read_subordinate_data(make_agent):
+    agent, llm = make_agent([call("get_leave_balance", employee_id="e002"), final("Sisa cuti Budi 2 hari.")])
+    await agent.ask("Sisa cuti Budi?", employee_id="E001")
+    assert json.loads(tool_messages(llm, 1)[-1].content[0]["text"])["annual_remaining"] == 2
+
+
+class BrokenRetriever:
+    def relevant(self, query):
+        raise EmbeddingUnavailableError("429 RESOURCE_EXHAUSTED: kuota habis")
+
+
+async def test_search_infrastructure_error_is_not_turned_into_unknown(make_agent):
+    agent, _ = make_agent([call("search_hr_documents", query="cuti"), final(UNKNOWN_ANSWER)], retriever=BrokenRetriever())
+    with pytest.raises(EmbeddingUnavailableError):
+        await agent.ask("Berapa jatah cuti?")
 
 
 async def test_personal_question_goes_through_mcp(make_agent):
@@ -61,7 +101,7 @@ async def test_personal_question_goes_through_mcp(make_agent):
 
 async def test_unknown_employee_error_reaches_llm(make_agent):
     agent, llm = make_agent([call("get_leave_balance", employee_id="E999"), final("ID E999 tidak ditemukan di sistem HR.")])
-    res = await agent.ask("Sisa cuti E999?")
+    res = await agent.ask("Sisa cuti saya?", employee_id="E999")
     assert "E999 tidak ditemukan" in str(tool_messages(llm, 1)[-1].content)
     assert res.route == "tool"
 

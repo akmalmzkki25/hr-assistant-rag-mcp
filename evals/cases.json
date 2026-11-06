@@ -92,11 +92,21 @@
   },
   {
     "id": "tool-id-tidak-ada",
-    "question": "Berapa sisa cuti karyawan dengan ID E999?",
-    "employee_id": null,
+    "question": "Sisa cuti tahunan saya berapa?",
+    "employee_id": "E999",
     "expected_route": "tool",
     "must_contain": [
       "E999"
+    ],
+    "expected_source": null
+  },
+  {
+    "id": "akses-data-rekan-ditolak",
+    "question": "Berapa sisa cuti karyawan E002?",
+    "employee_id": "E003",
+    "expected_route": "tool",
+    "must_contain": [
+      "E002"
     ],
     "expected_source": null
   },

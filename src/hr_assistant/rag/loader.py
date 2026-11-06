@@ -4,8 +4,15 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 from pypdf import PdfReader
+from pypdf.errors import PyPdfError
+
+from hr_assistant.errors import SetupError
 
 SUPPORTED_SUFFIXES = {".md", ".txt", ".pdf"}
+
+
+class DocumentLoadError(SetupError):
+    """Satu berkas dokumen tidak bisa dibaca; pesannya menyebut berkas mana."""
 
 
 def load_documents(docs_dir: Path) -> list[Document]:
@@ -13,7 +20,12 @@ def load_documents(docs_dir: Path) -> list[Document]:
     for path in sorted(docs_dir.rglob("*")):
         if path.is_file() and path.suffix.lower() in SUPPORTED_SUFFIXES:
             source = path.relative_to(docs_dir).as_posix()
-            documents.append(Document(page_content=_read_text(path), metadata={"source": source}))
+            try:
+                text = _read_text(path)
+            except (PyPdfError, UnicodeDecodeError, OSError) as error:
+                message = f"Gagal membaca {source}: {error}. Perbaiki atau keluarkan berkas ini dari folder dokumen."
+                raise DocumentLoadError(message) from error
+            documents.append(Document(page_content=text, metadata={"source": source}))
     return documents
 
 
