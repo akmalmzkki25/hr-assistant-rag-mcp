@@ -17,6 +17,8 @@ dependencies = [
     "google-genai>=3.0",
     "typesense>=2.1,<3",
     "psycopg[binary]>=3.2,<4",
+    "alembic>=1.14,<2",
+    "sqlalchemy>=2.0,<3",
     "pydantic-settings>=2.6,<3",
     "pypdf>=5",
 ]
@@ -28,7 +30,7 @@ dev = ["pytest>=9", "pymupdf>=1.24"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-hr_assistant = ["db/*.sql"]
+hr_assistant = ["db/migrations/*.py", "db/migrations/*.mako", "db/migrations/versions/*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

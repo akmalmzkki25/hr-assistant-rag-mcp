@@ -18,6 +18,30 @@ def test_init_is_idempotent(test_database_url):
     assert count(test_database_url, "leave_balances") == 3
 
 
+def test_migrations_reach_head(test_database_url):
+    from hr_assistant.db.database import migration_head
+
+    with psycopg.connect(test_database_url) as conn:
+        version = conn.execute("select version_num from alembic_version").fetchone()[0]
+    assert version == migration_head() == "0002_seed_dummy_employees"
+
+
+def test_downgrade_then_upgrade_restores_data(test_database_url):
+    from hr_assistant.db.database import downgrade_database, with_database
+
+    scratch_url = with_database(test_database_url, "hr_assistant_migration_test")
+    init_database(scratch_url)
+    try:
+        downgrade_database(scratch_url, "base")
+        with psycopg.connect(scratch_url) as conn:
+            assert conn.execute("select to_regclass('public.employees')").fetchone()[0] is None
+        init_database(scratch_url)
+        assert count(scratch_url, "employees") == 3
+    finally:
+        with psycopg.connect(with_database(test_database_url, "postgres"), autocommit=True) as admin:
+            admin.execute("DROP DATABASE IF EXISTS hr_assistant_migration_test WITH (FORCE)")
+
+
 def test_leave_balance_for_known_employee(test_database_url):
     balance = EmployeeRepository(test_database_url).leave_balance("E001")
     assert balance == {

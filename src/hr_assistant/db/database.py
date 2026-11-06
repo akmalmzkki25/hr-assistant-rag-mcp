@@ -1,29 +1,66 @@
-"""Inisialisasi database, repository data karyawan, dan log run agent."""
+"""Inisialisasi database lewat migrasi Alembic, repository data karyawan, dan log run agent."""
 
 from dataclasses import dataclass, field
 from importlib.resources import files
 
 import psycopg
+from alembic import command
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from sqlalchemy.engine import URL
 
 
 def with_database(database_url: str, dbname: str) -> str:
     return make_conninfo(database_url, dbname=dbname)
 
 
+def sqlalchemy_url(database_url: str | None = None) -> str:
+    """Ubah conninfo libpq menjadi URL SQLAlchemy dengan driver psycopg 3, untuk Alembic."""
+    if database_url is None:
+        from hr_assistant.config import get_settings
+
+        database_url = get_settings().database_url
+    params = conninfo_to_dict(database_url)
+    url = URL.create(
+        "postgresql+psycopg",
+        username=params.get("user"),
+        password=params.get("password"),
+        host=params.get("host"),
+        port=int(params["port"]) if params.get("port") else None,
+        database=params.get("dbname"),
+    )
+    return url.render_as_string(hide_password=False)
+
+
 def init_database(database_url: str) -> None:
-    """Buat database kalau belum ada, lalu terapkan schema dan seed. Aman dijalankan berulang."""
+    """Buat database kalau belum ada, lalu jalankan migrasi sampai head. Aman dijalankan berulang."""
     dbname = conninfo_to_dict(database_url)["dbname"]
     with psycopg.connect(with_database(database_url, "postgres"), autocommit=True) as admin:
         exists = admin.execute("SELECT 1 FROM pg_database WHERE datname = %s", (dbname,)).fetchone()
         if not exists:
             admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
-    with psycopg.connect(database_url) as conn:
-        for script in ("schema.sql", "seed.sql"):
-            conn.execute(files("hr_assistant.db").joinpath(script).read_text(encoding="utf-8"))
+    command.upgrade(_alembic_config(database_url), "head")
+
+
+def downgrade_database(database_url: str, revision: str) -> None:
+    command.downgrade(_alembic_config(database_url), revision)
+
+
+def migration_head() -> str:
+    return ScriptDirectory.from_config(_alembic_config()).get_current_head()
+
+
+def _alembic_config(database_url: str | None = None) -> Config:
+    config = Config()
+    config.set_main_option("script_location", str(files("hr_assistant.db").joinpath("migrations")))
+    if database_url:
+        # ConfigParser treats % as interpolation, and percent-encoded passwords contain it.
+        config.set_main_option("sqlalchemy.url", sqlalchemy_url(database_url).replace("%", "%%"))
+    return config
 
 
 class EmployeeRepository:
