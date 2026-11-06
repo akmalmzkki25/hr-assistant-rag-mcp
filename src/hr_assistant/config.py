@@ -1,40 +1,32 @@
 """Konfigurasi aplikasi dari environment dan berkas .env."""
 
-import os
-from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-@dataclass(frozen=True)
-class Settings:
-    docs_dir: Path
-    index_dir: Path
-    employee_data: Path
-    collection: str = "hr_docs"
-    embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-    gemini_model: str = "gemini-3.8-flash"
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")
+
     gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3.8-flash"
+    embedding_model: str = "gemini-embedding-2"
+    embedding_dim: int = 768
+
+    typesense_url: str = "http://localhost:8108"
+    typesense_api_key: str | None = None
+    typesense_collection: str = "hr_docs"
+
+    database_url: str = "postgresql://postgres@localhost:5432/hr_assistant"
+
+    docs_dir: Path = Field(default=PROJECT_ROOT / "data" / "docs", validation_alias="HR_DOCS_DIR")
     top_k: int = 4
-    min_score: float = 0.45
+    min_score: float = Field(default=0.6, validation_alias="HR_MIN_SCORE")
     max_steps: int = 6
 
 
-def load_settings() -> Settings:
-    load_dotenv(PROJECT_ROOT / ".env")
-    return Settings(
-        docs_dir=_path("HR_DOCS_DIR", "data/docs"),
-        index_dir=_path("HR_INDEX_DIR", ".index"),
-        employee_data=_path("HR_EMPLOYEE_DATA", "data/employees.json"),
-        gemini_model=os.environ.get("GEMINI_MODEL") or Settings.gemini_model,
-        gemini_api_key=os.environ.get("GEMINI_API_KEY") or None,
-        min_score=float(os.environ.get("HR_MIN_SCORE", Settings.min_score)),
-    )
-
-
-def _path(env_name: str, default: str) -> Path:
-    path = Path(os.environ.get(env_name, default))
-    return path if path.is_absolute() else PROJECT_ROOT / path
+def get_settings() -> Settings:
+    return Settings()
