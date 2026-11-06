@@ -2,22 +2,47 @@
 
 Chatbot HR internal berbasis CLI. Chatbot ini menjawab pertanyaan kebijakan dari dokumen HR (RAG), mengambil data cuti dan bawahan karyawan lewat MCP server, dan menjawab "tidak tahu" kalau jawabannya tidak ada di dokumen.
 
-Dokumen HR di `data/docs/` dan data karyawan di `data/employees.json` adalah contoh fiktif untuk demo.
+Dokumen HR di `data/docs/` dan data karyawan di migrasi seed adalah contoh fiktif untuk demo.
 
 ## Isi repo
 
 | Kebutuhan | Lokasi |
 |---|---|
 | 1. Diagram arsitektur dan justifikasi komponen | [docs/architecture.md](docs/architecture.md) |
-| 2. Pipeline RAG: chunking, embedding, vector store, retrieval top-k | `src/hr_assistant/chunking.py`, `embeddings.py`, `vector_store.py`, `rag.py` |
-| 3. MCP server dengan `get_leave_balance` dan `get_subordinat_list` | `src/hr_assistant/mcp_server.py` |
-| 4. Agent dengan tool calling lewat MCP, guardrail, harness dan loop | `src/hr_assistant/agent.py`, `llm.py`, `prompts.py`, `evals.py` |
+| 2. Pipeline RAG: chunking, embedding, vector store, retrieval top-k | `src/hr_assistant/rag/` (`loader.py`, `chunking.py`, `embeddings.py`, `store.py`, `retriever.py`, `ingest.py`) |
+| 3. MCP server dengan `get_leave_balance` dan `get_subordinat_list` | `src/hr_assistant/mcp_server.py`, data di `src/hr_assistant/db/` |
+| 4. Agent dengan tool calling lewat MCP, guardrail, harness dan loop | `src/hr_assistant/agent/` (`graph.py`, `guardrail.py`, `tools.py`, `prompts.py`), `evals.py` |
 | 5. Dokumentasi | README ini |
-| Test otomatis | `tests/` (61 test, tanpa jaringan) |
+| Test otomatis | `tests/` (81 test: 48 unit tanpa servis, 33 integrasi dengan Postgres, Typesense, dan MCP stdio) |
+
+## Stack
+
+| Komponen | Pilihan |
+|---|---|
+| LLM | Gemini `gemini-3.8-flash` lewat `langchain-google-genai` |
+| Harness agent | LangGraph `StateGraph` + `ToolNode`, memori chat dengan `InMemorySaver` |
+| Embedding | `gemini-embedding-2`, 768 dimensi |
+| Vector store | Typesense 0.25.2, hybrid search (kata kunci + vektor) |
+| Data karyawan dan log run | Postgres, migrasi dengan Alembic |
+| MCP | FastMCP (`mcp` 1.30) lewat stdio, client `langchain-mcp-adapters` |
+
+Alasan setiap pilihan ada di [docs/architecture.md](docs/architecture.md#alasan-pilihan-komponen).
 
 ## Setup
 
-Butuh Python 3.12 dan [uv](https://docs.astral.sh/uv/).
+Butuh Python 3.12, [uv](https://docs.astral.sh/uv/), dan Docker.
+
+Jalankan Typesense dan Postgres:
+
+```bash
+docker run -d --name typesense --restart unless-stopped -p 8108:8108 -v typesense_data:/data typesense/typesense:0.25.2 --data-dir /data --api-key=ganti-password-typesense --listen-port 8108 --enable-cors
+```
+
+```bash
+docker run -d --name postgres --restart unless-stopped -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=ganti-password-postgres -p 5432:5432 postgres:16
+```
+
+Pasang dependensi:
 
 ```bash
 uv venv .venv --python 3.12
@@ -27,45 +52,71 @@ uv venv .venv --python 3.12
 uv pip install --python .venv/Scripts/python.exe -e ".[dev]"
 ```
 
-Salin `.env.example` menjadi `.env`, lalu isi `GEMINI_API_KEY` dengan key gratis dari [Google AI Studio](https://aistudio.google.com/apikey). Model bisa diganti lewat `GEMINI_MODEL` (default `gemini-3.8-flash`).
+Salin `.env.example` menjadi `.env`, lalu isi:
 
-Di macOS atau Linux, ganti `.venv/Scripts/python.exe` dengan `.venv/bin/python` di semua perintah.
+- `GEMINI_API_KEY`: key gratis dari [Google AI Studio](https://aistudio.google.com/apikey).
+- `TYPESENSE_API_KEY`: sama dengan `--api-key` di perintah Docker.
+- `DATABASE_URL`: misalnya `postgresql://postgres:ganti-password-postgres@localhost:5432/hr_assistant`.
+
+Model bisa diganti lewat `GEMINI_MODEL` (default `gemini-3.8-flash`) dan `EMBEDDING_MODEL` (default `gemini-embedding-2`). Di macOS atau Linux, ganti `.venv/Scripts/python.exe` dengan `.venv/bin/python` di semua perintah.
 
 ## Menjalankan
 
-Buat index dari dokumen. Run pertama mengunduh model embedding sekitar 1 GB.
+Buat database `hr_assistant` dan jalankan migrasi Alembic (skema dan data dummy). Aman dijalankan berulang.
+
+```bash
+.venv/Scripts/python.exe -m hr_assistant db-init
+```
+
+```text
+Database siap, migrasi sampai revision 0002_seed_dummy_employees.
+```
+
+Buat index dokumen di Typesense:
 
 ```bash
 .venv/Scripts/python.exe -m hr_assistant ingest
 ```
 
 ```text
-Index dibuat: 22 chunk dari 5 dokumen.
+Index dibuat: 23 chunk dari 6 dokumen.
 ```
 
 Pertanyaan kebijakan (lewat RAG):
 
 ```bash
-.venv/Scripts/python.exe -m hr_assistant ask "Berapa jatah cuti tahunan?"
+.venv/Scripts/python.exe -m hr_assistant ask "Berapa jatah cuti tahunan karyawan?"
+```
+
+Pertanyaan dari dokumen PDF:
+
+```bash
+.venv/Scripts/python.exe -m hr_assistant ask "Berapa uang harian perjalanan dinas untuk manajer?"
 ```
 
 Pertanyaan data pribadi (lewat MCP). ID karyawan dummy: `E001` (manager), `E002`, `E003`.
 
 ```bash
-.venv/Scripts/python.exe -m hr_assistant ask "Sisa cuti saya berapa?" --employee-id E001
+.venv/Scripts/python.exe -m hr_assistant ask "Siapa saja bawahan saya?" --employee-id E001
 ```
 
 Pertanyaan di luar dokumen, yang harus dijawab "tidak tahu":
 
 ```bash
-.venv/Scripts/python.exe -m hr_assistant ask "Berapa gaji direktur utama?"
+.venv/Scripts/python.exe -m hr_assistant ask "Berapa gaji CEO Majoo?"
 ```
 
-Tambahkan `--trace` untuk melihat setiap langkah agent (panggilan LLM, tool, guardrail) sebagai JSON. Mode interaktif tersedia lewat `chat --employee-id E001`.
+Tambahkan `--trace` untuk melihat setiap langkah agent (panggilan LLM dan tool) sebagai JSON.
 
-Kalau muncul `LLM tidak tersedia: 404 NOT_FOUND ... ganti GEMINI_MODEL`, model default belum tersedia untuk key kamu. Isi `GEMINI_MODEL` di `.env` dengan model yang ada di daftar Google AI Studio, misalnya `gemini-2.5-flash`. Kalau muncul `429 RESOURCE_EXHAUSTED`, kuota gratis per menit habis; tunggu sebentar lalu ulangi.
+Mode interaktif dengan memori percakapan. Pertanyaan lanjutan seperti "kalau sisanya tidak terpakai?" memakai konteks giliran sebelumnya. Kosongkan baris lalu Enter untuk keluar.
 
-Menjalankan eval harness (12 kasus, jeda 4 detik antar kasus untuk kuota gratis):
+```bash
+.venv/Scripts/python.exe -m hr_assistant chat --employee-id E001
+```
+
+Setiap run `ask` dan `chat` dicatat di tabel `agent_runs`. Kalau Postgres mati, jawaban tetap dicetak dan CLI hanya memberi peringatan bahwa log tidak tersimpan.
+
+Menjalankan eval harness (15 kasus, jeda 4 detik antar kasus untuk kuota gratis):
 
 ```bash
 .venv/Scripts/python.exe -m hr_assistant eval
@@ -77,48 +128,66 @@ MCP server juga bisa dijalankan sendiri, misalnya untuk diuji dengan MCP Inspect
 .venv/Scripts/python.exe -m hr_assistant.mcp_server
 ```
 
-Menjalankan test:
+Menjalankan test. Test integrasi dilewati otomatis kalau Typesense atau Postgres tidak bisa dihubungi. Test memakai database `hr_assistant_test` dan collection `hr_docs_test`, jadi data demo tidak tersentuh.
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
 ```
 
+### Kalau ada error
+
+CLI mencetak satu baris yang menyebut servis yang bermasalah, bukan traceback:
+
+| Pesan | Penyebab dan solusi |
+|---|---|
+| `Typesense tidak bisa dihubungi di ...` | Container mati. Jalankan `docker start typesense`. |
+| `Postgres tidak bisa dihubungi: ...` | Container mati atau `DATABASE_URL` salah. Jalankan `docker start postgres`. |
+| `Index belum dibuat ...` | Jalankan `ingest` dulu. |
+| `LLM tidak tersedia: ... 404 NOT_FOUND` | Model belum tersedia untuk key kamu. Isi `GEMINI_MODEL` dengan model yang ada di Google AI Studio, misalnya `gemini-2.5-flash`. |
+| `... 429 RESOURCE_EXHAUSTED` | Kuota gratis per menit habis. Tunggu sebentar lalu ulangi. Embedding dan LLM sudah mencoba ulang 3 kali dengan backoff. |
+
 ## Arsitektur singkat
 
 ```mermaid
 flowchart LR
-    CLI --> Agent[HRAgent]
-    Agent <--> Gemini
-    Agent -->|search_hr_documents| Retriever --> Chroma[(Chroma)]
-    Agent -->|MCP stdio| MCPServer[MCP server] --> Data[(employees.json)]
-    Agent --> Guardrail{sitasi valid?}
+    CLI --> Graph[LangGraph<br/>agent, tools, guardrail, finish]
+    Graph <--> Gemini
+    Graph -->|search_hr_documents| Retriever --> Typesense[(Typesense)]
+    Retriever --> Embed[gemini-embedding-2]
+    Graph -->|MCP stdio| MCPServer[FastMCP server] --> Postgres[(Postgres)]
 ```
 
-Agent mengirim pertanyaan ke Gemini bersama dua jenis tool: `search_hr_documents` (RAG lokal) dan tool yang ditemukan dari MCP server lewat `list_tools`. Gemini memilih tool dan agent mengeksekusinya. Tool MCP dipanggil lewat `call_tool` ke proses MCP server terpisah, bukan dengan memanggil fungsi Python langsung. Penjelasan lengkap, diagram urutan, dan alasan tiap komponen ada di [docs/architecture.md](docs/architecture.md).
+Agent mengirim pertanyaan ke Gemini bersama dua jenis tool: `search_hr_documents` (RAG) dan tool yang ditemukan dari MCP server lewat `list_tools`. Gemini memilih tool dan node `tools` mengeksekusinya. Tool MCP dipanggil lewat `call_tool` ke proses MCP server terpisah, bukan dengan memanggil fungsi Python langsung. Penjelasan lengkap, diagram urutan, dan alasan tiap komponen ada di [docs/architecture.md](docs/architecture.md).
 
 ## Trade-off
 
-**Chunk per heading, maksimal 700 karakter dengan overlap 100.** Dokumen HR sudah terstruktur per bagian, jadi satu bagian biasanya berisi satu aturan utuh. Memotong di heading menjaga aturan tetap utuh, dan path heading (misalnya `Kebijakan Cuti > Cuti Tahunan`) ikut di-embed supaya konteksnya tidak hilang. Batas 700 karakter mengikuti jendela input model embedding. Bagian yang lebih panjang dipotong per kalimat dengan overlap, supaya kalimat di batas potongan tidak terputus.
+**Chunk per heading, maksimal 1200 karakter dengan overlap 150.** Dokumen HR sudah terstruktur per bagian, jadi satu bagian biasanya berisi satu aturan utuh. `MarkdownHeaderTextSplitter` memotong di heading, lalu `RecursiveCharacterTextSplitter` memotong bagian yang terlalu panjang. Path heading (misalnya `Kebijakan Cuti > Cuti Tahunan`) ikut di-embed supaya konteksnya tidak hilang. Batas 1200 karakter jauh di bawah jendela 8192 token `gemini-embedding-2`, tetapi chunk yang lebih besar mencampur beberapa aturan dalam satu vektor dan membuat sitasi kurang tepat. Dokumen tanpa heading, seperti PDF contoh, memakai nama berkas sebagai bagian.
 
-**Chroma, bukan pgvector atau FAISS.** Chroma cukup satu folder lokal tanpa server, menyimpan metadata bersama vektor, dan sudah menyediakan cosine similarity. FAISS lebih cepat untuk jutaan vektor, tetapi metadata dan persistensi harus diurus sendiri. Untuk 200 halaman dokumen, kecepatan bukan masalah. Di production, pgvector lebih cocok supaya index berada di database yang sama dengan data HR dan ikut kontrol aksesnya.
+**Typesense, bukan pgvector.** Postgres sudah ada di stack, jadi pgvector juga masuk akal. Typesense dipilih karena hybrid search kata kunci dan vektor tersedia dalam satu query tanpa menulis SQL ranking sendiri, dan typo tolerance-nya membantu istilah yang salah ketik. Harganya satu servis tambahan untuk dijalankan.
 
-**Embedding lokal, bukan API.** Ingest tidak memakai kuota dan dokumen internal tidak dikirim ke luar. Harganya: unduhan model sekitar 1 GB, dan kualitasnya sedikit di bawah model embedding API terbaru.
+**Embedding lewat API, bukan model lokal.** Versi pertama memakai model lokal sekitar 1 GB. `gemini-embedding-2` tidak perlu unduhan, mendukung input panjang, dan menaruh bagian yang benar di urutan pertama lebih sering. Harganya: ingest memakai kuota API, isi dokumen dikirim ke Google, dan jarak skor antara pertanyaan di dalam dan di luar dokumen lebih sempit (lihat ambang di bawah), sehingga penolakan lebih bergantung pada guardrail. Untuk dokumen HR sungguhan, perlu dicek dulu apakah itu diizinkan.
 
-**Ambang skor 0,45.** Ambang ini dipilih dari uji kalibrasi dengan model embedding sungguhan. Pertanyaan yang jawabannya ada di dokumen mendapat skor 0,55 sampai 0,82, sedangkan pertanyaan di luar dokumen 0,12 sampai 0,42. Ambang lebih tinggi menambah jawaban "tidak tahu" yang sebenarnya bisa dijawab. Ambang lebih rendah menambah risiko model diberi konteks yang tidak relevan.
+**Rerank dengan kemiripan vektor.** Fusion bawaan Typesense memberi peringkat tinggi ke chunk yang hanya cocok di kata umum seperti "berapa". Retriever mengambil 5 kali `top_k` kandidat, lalu mengurutkan dengan kemiripan vektor. Hasilnya, bagian Cuti Tahunan sekarang di urutan pertama untuk "Berapa jatah cuti tahunan karyawan?" (skor 0,806). Di versi pertama bagian itu di urutan ke-4.
 
-**Satu kali revisi sebelum "tidak tahu".** Kalau jawaban pertama tidak punya sitasi valid, agent diberi satu pesan koreksi. Ini memulihkan kasus model lupa menulis sitasi, dengan biaya satu panggilan LLM tambahan. Lebih dari satu revisi jarang membantu dan membuat jawaban lambat.
+**Ambang kemiripan 0,70.** Ambang ini dipilih dari uji kalibrasi dengan `gemini-embedding-2`. Pertanyaan yang jawabannya ada di dokumen mendapat skor 0,72 sampai 0,86, sedangkan pertanyaan di luar dokumen 0,54 sampai 0,68. Satu pengecualian: "bonus tahunan" mendapat 0,73 karena mirip bagian cuti tahunan. Kasus itu ditolak oleh prompt dan guardrail, bukan oleh ambang, dan ada di eval (`unknown-bonus-tahunan`).
 
-**Guardrail berbasis sitasi dan angka.** Jawaban dari dokumen harus menunjuk chunk yang benar-benar diambil. Jawaban dari tool MCP tanpa sitasi hanya lolos kalau setiap angka di dalamnya muncul di hasil tool, sehingga aturan karangan seperti "carry over maksimal 6 hari" ditolak. Guardrail ini belum memeriksa apakah isi kalimat benar-benar didukung chunk, dan angka yang ditulis dengan huruf ("dua kali") tidak ikut diperiksa. Pemeriksaan isi butuh LLM judge atau model NLI, dan masuk rencana eval di bawah.
+**Satu kali revisi sebelum "tidak tahu".** Kalau jawaban pertama tidak punya sitasi valid, agent diberi satu pesan koreksi. Ini memulihkan kasus model lupa menulis sitasi, dengan biaya satu panggilan LLM tambahan.
+
+**Guardrail berbasis sitasi dan angka.** Jawaban dari dokumen harus menunjuk chunk yang benar-benar diambil pada giliran itu. Jawaban dari tool MCP tanpa sitasi hanya lolos kalau setiap angka di dalamnya muncul di hasil tool, sehingga aturan karangan seperti "carry over maksimal 6 hari" ditolak. Guardrail ini belum memeriksa apakah isi kalimat benar-benar didukung chunk, dan angka yang ditulis dengan huruf ("dua kali") tidak ikut diperiksa. Pemeriksaan isi butuh LLM judge atau model NLI.
+
+**`mcp` 1.30, bukan 2.x.** `langchain-mcp-adapters` 0.3.2 belum mendukung `mcp` 2, jadi server memakai `FastMCP` dari `mcp` 1.30. Nama tool dan protokolnya sama.
+
+**Memori chat di proses, bukan di database.** `InMemorySaver` cukup untuk satu sesi CLI. Untuk banyak pengguna, checkpointer bisa diganti `PostgresSaver` dari `langgraph-checkpoint-postgres` tanpa mengubah graph.
 
 ## Harness dan loop engineering
 
-Harness di sini adalah kerangka yang menjalankan, membatasi, dan memeriksa loop agent. Ada empat bagian:
+Harness di sini adalah kerangka yang menjalankan, membatasi, dan memeriksa loop agent. LangGraph menjadi harness-nya, dengan empat bagian:
 
-1. **Loop agent terbatas.** Agent menjalankan loop panggil LLM, eksekusi tool, lalu kirim hasil, sampai model memberi jawaban final atau batas `max_steps` (6) tercapai. Kalau batas tercapai, agent menjawab "tidak tahu" dengan `stop_reason=max_steps`, bukan menggantung.
-2. **Verifikasi lalu revisi.** Jawaban final diperiksa guardrail. Kalau gagal, loop berlanjut dengan pesan koreksi, lalu diperiksa lagi. Ini loop verify-and-retry yang dibatasi satu kali revisi.
-3. **Error tool dikembalikan ke model.** Error dari MCP (misalnya ID `E999` tidak ditemukan) atau nama tool yang tidak ada dikirim balik ke model sebagai hasil tool, bukan menghentikan program. Model bisa menyampaikan error itu atau mencoba tool lain.
-4. **Eval harness.** `python -m hr_assistant eval` menjalankan 12 kasus di `evals/cases.json` lewat agent yang sama, lalu menilai empat cek per kasus:
-   - `route`: tool yang dipakai sesuai harapan
+1. **Loop agent terbatas.** Graph berputar antara node `agent` dan `tools` sampai model memberi jawaban final atau batas `max_steps` (6 panggilan LLM) tercapai. Kalau batas tercapai, node `finish` menjawab "tidak tahu" dengan `stop_reason=max_steps`, bukan menggantung. `recursion_limit` LangGraph dipasang di atas batas itu sebagai pengaman kedua.
+2. **Verifikasi lalu revisi.** Jawaban final masuk node `guardrail`. Kalau gagal, edge kembali ke `agent` dengan pesan koreksi, lalu diperiksa lagi. Revisi dibatasi satu kali.
+3. **Error tool dikembalikan ke model.** `ToolNode` dengan `handle_tool_errors=True` mengubah error MCP (misalnya ID `E999` tidak ditemukan) menjadi `ToolMessage` berstatus error, bukan menghentikan program. Model menyampaikan error itu ke pengguna.
+4. **Eval harness.** `python -m hr_assistant eval` menjalankan 15 kasus di `evals/cases.json` lewat graph yang sama, lalu menilai empat cek per kasus:
+   - `route`: tool yang dipakai sesuai harapan (`rag`, `tool`, `mixed`, atau `none`)
    - `contains`: jawaban memuat fakta kunci
    - `source`: sitasi menunjuk bagian dokumen yang benar
    - `refusal`: "tidak tahu" hanya muncul di kasus yang memang di luar dokumen
@@ -129,31 +198,32 @@ Harness di sini adalah kerangka yang menjalankan, membatasi, dan memeriksa loop 
 
 Eval harness di repo ini adalah titik awal. Untuk production, eval berikut perlu ditambahkan:
 
-- **Golden set dari pertanyaan sungguhan.** Kumpulkan 100 sampai 200 pertanyaan dari log chatbot dan tiket HR, lalu minta tim HR menulis jawaban acuan dan bagian dokumen sumbernya. Perbarui setiap kali kebijakan berubah.
+- **Golden set dari pertanyaan sungguhan.** Ambil 100 sampai 200 pertanyaan dari tabel `agent_runs` dan tiket HR, lalu minta tim HR menulis jawaban acuan dan bagian dokumen sumbernya. Perbarui setiap kali kebijakan berubah.
 - **Metrik retrieval.** Recall@k dan MRR terhadap bagian sumber yang benar, untuk mendeteksi masalah chunking atau embedding secara terpisah dari LLM.
 - **Faithfulness dengan LLM judge.** Model penilai memeriksa apakah setiap klaim di jawaban didukung chunk yang dikutip. Penilai dikalibrasi dulu terhadap penilaian manusia pada sampel kecil.
 - **Akurasi penolakan.** Dua angka terpisah: seberapa sering agent menolak pertanyaan yang bisa dijawab, dan seberapa sering agent menjawab pertanyaan yang seharusnya ditolak. Angka kedua yang paling berbahaya untuk chatbot HR.
 - **Akurasi pemilihan tool.** Persentase pertanyaan data pribadi yang benar-benar memakai tool MCP dengan argumen ID yang benar.
 - **Regression gate di CI.** Eval dijalankan pada setiap perubahan prompt, model, chunking, atau ambang. Perubahan ditolak kalau faithfulness atau akurasi penolakan turun melewati batas yang disepakati.
-- **Monitoring online.** Tombol jempol atas/bawah, sampling percakapan untuk ditinjau manusia setiap minggu, latensi per langkah dari trace, dan rasio jawaban "tidak tahu" sebagai sinyal dokumen yang kurang lengkap.
+- **Monitoring online.** Latensi dan rute per run dari `agent_runs`, tombol jempol atas/bawah, sampling percakapan untuk ditinjau manusia setiap minggu, dan rasio jawaban "tidak tahu" sebagai sinyal dokumen yang kurang lengkap.
 
 ## Status verifikasi
 
-Diuji pada 6 November 2026 dengan `gemini-3.8-flash` dan key Gemini gratis.
+Diuji pada 6 November 2026 dengan `gemini-3.8-flash`, `gemini-embedding-2`, Typesense 0.25.2, dan Postgres 16.
 
-- 61 test otomatis lulus (`pytest -q`). Test tidak memakai jaringan: embedder palsu, LLM skrip, dan MCP server in-process. Dua test menjalankan MCP server sungguhan lewat stdio.
-- `ingest` dengan model embedding sungguhan: 22 chunk dari 5 dokumen.
-- Eval harness dengan Gemini asli: **12/12 lulus**, dengan cek rute, isi, sumber, dan penolakan masing-masing 100%. Laporan lengkap ditulis ke `logs/eval_report.json`.
+- 81 test otomatis lulus (`pytest -q`, 42 detik). Test unit memakai embedder palsu dan LLM skrip. Test integrasi memakai Postgres dan Typesense sungguhan, serta MCP server lewat stdio.
+- `db-init` dijalankan dua kali tanpa menggandakan data. `ingest`: 23 chunk dari 6 dokumen, termasuk satu PDF.
+- Eval harness dengan Gemini asli: **15/15 lulus**, dengan cek rute, isi, sumber, dan penolakan masing-masing 100%.
 - Contoh jawaban dari uji live:
-  - "Berapa jatah cuti tahunan?" dijawab "12 hari kerja per tahun" dengan sitasi `kebijakan_cuti.md#Kebijakan Cuti > Cuti Tahunan`.
-  - "Sisa cuti saya berapa?" dengan `--employee-id E001` dijawab "7 hari (dari total kuota 12 hari, telah digunakan 5 hari)" lewat `get_leave_balance`.
-  - "Berapa sisa cuti karyawan dengan ID E999?" dijawab "Karyawan dengan ID E999 tidak ditemukan."
-  - "Berapa gaji direktur utama?" dijawab "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
+  - "Berapa jatah cuti tahunan karyawan?" dijawab "12 hari kerja per tahun" dengan sitasi `kebijakan_cuti.md#Kebijakan Cuti > Cuti Tahunan`.
+  - "Berapa uang harian perjalanan dinas untuk manajer?" dijawab "Rp500.000 per hari" dengan sitasi ke PDF `pedoman_perjalanan_dinas.pdf`.
+  - "Siapa saja bawahan saya?" dengan `--employee-id E001` dijawab Budi Santoso (E002) dan Sari Lestari (E003) lewat `get_subordinat_list`.
+  - "Berapa gaji CEO Majoo?" dijawab "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
+  - Di `chat`, "Berapa sisa cuti tahunan saya?" dijawab 7 hari, lalu pertanyaan lanjutan "Kalau sisanya tidak terpakai, boleh dibawa ke tahun depan berapa hari?" dijawab maksimal 5 hari dengan sitasi bagian Carry Over Cuti.
 
 ## Keterbatasan
 
-- Data karyawan adalah dummy di berkas JSON, tanpa autentikasi. Di production, ID karyawan harus diambil dari sesi login, bukan dari argumen yang bisa diisi siapa saja, dan MCP server harus memeriksa bahwa penanya hanya boleh melihat datanya sendiri atau data bawahannya.
+- Korpus contoh hanya 6 dokumen, jauh lebih kecil dari dokumen HR sungguhan yang bisa mencapai ratusan halaman. Pipeline-nya sama untuk korpus besar, tetapi ambang 0,70 dan `top_k=4` perlu dikalibrasi ulang dengan dokumen sungguhan.
+- Data karyawan adalah dummy tanpa autentikasi. Di production, ID karyawan harus diambil dari sesi login, bukan dari argumen yang bisa diisi siapa saja, dan MCP server harus memeriksa bahwa penanya hanya boleh melihat datanya sendiri atau data bawahannya.
 - Guardrail memeriksa sitasi dan angka, belum memeriksa kebenaran isi kalimat (lihat Trade-off).
-- Pertanyaan lanjutan di mode `chat` belum membawa riwayat percakapan sebelumnya. Setiap pertanyaan diproses sendiri.
-- Peringkat retrieval belum selalu tepat. Pada uji live, bagian Cuti Tahunan berada di urutan ke-4 dari 4 hasil untuk pertanyaan "Berapa jatah cuti tahunan?", di bawah Carry Over Cuti. Jawabannya tetap benar karena `top_k=4`, tetapi reranker atau hybrid search (BM25 + vektor) akan membuatnya lebih andal.
 - Index dibangun ulang penuh setiap `ingest`. Untuk dokumen yang sering berubah, perlu ingest inkremental berdasarkan hash berkas.
+- Memori chat hilang saat proses CLI ditutup (lihat Trade-off).

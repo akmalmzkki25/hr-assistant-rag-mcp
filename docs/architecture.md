@@ -7,35 +7,40 @@ Dokumen ini menjelaskan komponen, alurnya, cara agent memilih antara RAG dan too
 ```mermaid
 flowchart LR
     User([Karyawan]) -->|pertanyaan + ID karyawan| CLI[CLI<br/>python -m hr_assistant]
-    CLI --> Agent[HRAgent<br/>loop tool calling terbatas]
+    CLI --> Graph
 
-    subgraph LLM[LLM]
-        Gemini[Gemini API<br/>function calling]
+    subgraph Graph[Agent LangGraph]
+        direction TB
+        AgentNode[node agent<br/>panggil LLM] -->|ada tool call| ToolsNode[node tools<br/>ToolNode]
+        ToolsNode --> AgentNode
+        AgentNode -->|jawaban final| GuardNode{node guardrail<br/>sitasi + angka}
+        GuardNode -->|gagal, sisa 1 revisi| AgentNode
+        GuardNode -->|lolos atau gagal lagi| FinishNode[node finish]
+        AgentNode -->|max_steps tercapai| FinishNode
     end
-    Agent <-->|riwayat pesan + daftar tool| Gemini
+
+    AgentNode <-->|pesan + skema tool| Gemini[Gemini<br/>ChatGoogleGenerativeAI]
+    Graph <-->|InMemorySaver per thread| Memory[(riwayat chat)]
 
     subgraph RAG[Pipeline RAG]
-        Docs[(data/docs<br/>Markdown, TXT, PDF)] --> Chunker[Chunker per heading]
-        Chunker --> Embedder[fastembed<br/>multilingual mpnet]
-        Embedder --> Chroma[(Chroma<br/>.index/)]
-        Retriever[Retriever top-k<br/>+ ambang skor]
-        Retriever --> Embedder
-        Retriever --> Chroma
+        Docs[(data/docs<br/>Markdown, TXT, PDF)] --> Splitter[LangChain text splitter<br/>per heading, 1200 karakter]
+        Splitter --> Embed[gemini-embedding-2<br/>768 dimensi]
+        Embed --> TS[(Typesense 0.25<br/>collection hr_docs)]
+        Retriever[HRRetriever<br/>hybrid search + rerank vektor]
+        Retriever --> Embed
+        Retriever --> TS
     end
-    Agent -->|search_hr_documents| Retriever
+    ToolsNode -->|search_hr_documents| Retriever
 
     subgraph MCP[MCP]
-        Client[MCP Client] <-->|JSON-RPC lewat stdio| Server[MCP server hr-tools<br/>proses terpisah]
-        Server --> Employees[(data/employees.json<br/>data dummy)]
+        Adapter[langchain-mcp-adapters<br/>MCP client] <-->|JSON-RPC lewat stdio| Server[FastMCP server hr-tools<br/>proses terpisah]
+        Server --> PG[(Postgres<br/>employees, leave_balances)]
     end
-    Agent -->|list_tools, call_tool| Client
+    ToolsNode -->|get_leave_balance<br/>get_subordinat_list| Adapter
 
-    Agent --> Guard{Guardrail<br/>grounding + sitasi}
-    Guard -->|lolos| CLI
-    Guard -->|gagal 2 kali| Unknown["Maaf, saya tidak tahu..."]
-    Unknown --> CLI
-
-    Eval[Eval harness<br/>evals/cases.json] --> Agent
+    Alembic[Alembic<br/>db-init] --> PG
+    CLI -->|log setiap run| Runs[(Postgres<br/>agent_runs)]
+    Eval[Eval harness<br/>evals/cases.json] --> Graph
 ```
 
 ## Alur keputusan RAG atau MCP
@@ -43,51 +48,67 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant U as Karyawan
-    participant A as HRAgent
+    participant A as node agent
     participant G as Gemini
-    participant R as Retriever
+    participant T as node tools
+    participant R as HRRetriever
     participant M as MCP server
+    participant V as node guardrail
 
-    U->>A: "Sisa cuti saya berapa? Kalau mau carry over, aturannya apa?"
-    A->>M: list_tools
-    M-->>A: get_leave_balance, get_subordinat_list
-    A->>G: pertanyaan + tool: search_hr_documents, get_leave_balance, get_subordinat_list
+    U->>A: "Sisa cuti saya berapa? Kalau mau carry over, aturannya apa?" (E001)
+    Note over A,M: Saat start, adapter MCP membaca daftar tool lewat list_tools
+    A->>G: pesan + tool: search_hr_documents, get_leave_balance, get_subordinat_list
     G-->>A: call get_leave_balance(employee_id=E001)
-    A->>M: call_tool get_leave_balance
-    M-->>A: {"annual_remaining": 7, ...}
+    A->>T: tool call
+    T->>M: call_tool get_leave_balance
+    M-->>T: {"annual_remaining": 7, ...}
+    T->>A: ToolMessage
     A->>G: hasil tool
     G-->>A: call search_hr_documents(query="carry over cuti")
-    A->>R: relevant("carry over cuti")
-    R-->>A: chunk kebijakan_cuti.md#Kebijakan Cuti > Carry Over Cuti
+    A->>T: tool call
+    T->>R: search("carry over cuti")
+    R-->>T: chunk kebijakan_cuti.md#Kebijakan Cuti > Carry Over Cuti
+    T->>A: ToolMessage + artifact source_id
     A->>G: hasil tool
     G-->>A: jawaban + [sumber: kebijakan_cuti.md#Kebijakan Cuti > Carry Over Cuti]
-    A->>A: guardrail: sitasi ada di chunk yang diambil, MCP dipakai
-    A-->>U: jawaban, route=mixed, sumber
+    A->>V: jawaban final
+    V-->>U: lolos: sitasi cocok dengan chunk giliran ini, angka 7 ada di hasil MCP. route=mixed
 ```
 
-Yang memilih tool adalah Gemini, berdasarkan deskripsi tool dan aturan di system prompt (`src/hr_assistant/prompts.py`):
+Yang memilih tool adalah Gemini, berdasarkan deskripsi tool dan aturan di system prompt (`src/hr_assistant/agent/prompts.py`):
 
 - Pertanyaan tentang data pribadi (sisa cuti, bawahan) diarahkan ke tool MCP, dengan ID karyawan dari pesan.
 - Pertanyaan tentang kebijakan dan prosedur diarahkan ke `search_hr_documents`.
 - Pertanyaan yang butuh keduanya boleh memakai keduanya dalam satu loop.
 
-Pilihan model itu tidak dipercaya begitu saja. Setelah model memberi jawaban final, guardrail deterministik di `agent.py` memeriksa jawabannya:
+Pilihan model itu tidak dipercaya begitu saja. Node `guardrail` (`src/hr_assistant/agent/guardrail.py`) memeriksa setiap jawaban final:
 
-1. Jawaban harus berasal dari hasil tool. Kalau `search_hr_documents` menemukan chunk, jawaban wajib menyertakan sitasi `[sumber: <source_id>]`. Jawaban yang hanya memakai hasil MCP (sukses atau error) boleh tanpa sitasi, asalkan setiap angka di jawaban muncul di hasil tool.
-2. Setiap sitasi harus cocok dengan chunk yang benar-benar diambil retriever untuk pertanyaan ini. Sitasi karangan langsung ditolak.
-3. Kalau gagal, agent diberi satu pesan koreksi dan satu kesempatan lagi. Kalau masih gagal, jawabannya diganti dengan kalimat baku: "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
-4. Retriever hanya mengembalikan chunk dengan skor kemiripan minimal 0,45. Pertanyaan di luar dokumen mendapat `found=false`, sehingga model tidak punya bahan untuk mengarang.
+1. Kalau `search_hr_documents` menemukan chunk, jawaban wajib menyertakan sitasi `[sumber: <source_id>]`.
+2. Setiap sitasi harus cocok dengan chunk yang diambil retriever pada giliran ini. Sitasi karangan, atau sitasi dari giliran chat sebelumnya, ditolak.
+3. Jawaban yang hanya memakai hasil MCP boleh tanpa sitasi, asalkan setiap angka di jawaban muncul di hasil tool.
+4. Kalau gagal, agent diberi satu pesan koreksi dan satu kesempatan lagi. Kalau masih gagal, node `finish` mengganti jawabannya dengan kalimat baku: "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
+5. Retriever hanya mengembalikan chunk dengan kemiripan vektor minimal 0,70. Pertanyaan di luar dokumen biasanya mendapat `found=false`, sehingga model tidak punya bahan untuk mengarang.
+
+Node `finish` juga membuang pesan koreksi dan jawaban yang ditolak dari state (`RemoveMessage`), supaya riwayat chat untuk giliran berikutnya hanya berisi jawaban yang lolos.
 
 ## Alasan pilihan komponen
 
-**Gemini (google-genai SDK).** Ada kuota gratis lewat Google AI Studio, jadi demo bisa dijalankan tanpa biaya, dan function calling-nya mendukung JSON Schema, sehingga skema tool MCP bisa diteruskan apa adanya. Automatic function calling di SDK sengaja dimatikan, supaya loop, batas langkah, dan guardrail dikendalikan kode sendiri. Model bisa diganti lewat `GEMINI_MODEL` tanpa mengubah kode.
+**LangGraph sebagai harness agent.** Loop agent ditulis sebagai `StateGraph` dengan empat node (`agent`, `tools`, `guardrail`, `finish`), jadi setiap jalur keluar (jawaban lolos, revisi, batas langkah) terlihat sebagai edge yang bisa diuji satu per satu. Checkpointer `InMemorySaver` memberi memori per `thread_id` untuk mode `chat` tanpa kode tambahan. Batas langkah dan guardrail tetap kode sendiri di dalam node, bukan agent prebuilt, karena aturan "tidak tahu" harus deterministik.
 
-**fastembed dengan `paraphrase-multilingual-mpnet-base-v2`.** Model ini berjalan lokal di CPU lewat ONNX, jadi ingest tidak memakai kuota API dan dokumen internal tidak keluar dari mesin. Model ini dilatih untuk sekitar 50 bahasa termasuk Bahasa Indonesia, dan pada uji kalibrasi pertanyaan berbahasa Inggris tetap menemukan bagian Cuti Tahunan. Ukurannya sekitar 1 GB, sehingga hanya diunduh sekali.
+**LangChain untuk bagian yang sudah ada pustakanya.** `ChatGoogleGenerativeAI` mengurus format tool call Gemini, termasuk thought signature Gemini 3 yang harus dikirim balik di giliran berikutnya. `ToolNode` mengeksekusi tool call dan mengubah error tool menjadi `ToolMessage` berstatus error. Text splitter LangChain dipakai untuk chunking. Antarmuka `Embeddings` membuat embedder bisa diganti tanpa mengubah retriever.
 
-**Chroma.** Chroma menyimpan vektor dan metadata (`source`, `section`) di folder lokal `.index/`, tanpa server database, cocok untuk demo lokal. Pencarian memakai cosine similarity, dan skornya dipakai untuk ambang guardrail. Untuk production, pgvector lebih masuk akal karena bisa satu database dengan data HR dan punya kontrol akses yang sudah ada.
+**MCP lewat stdio dengan FastMCP dan langchain-mcp-adapters.** MCP server berjalan sebagai proses terpisah (`python -m hr_assistant.mcp_server`) dan agent hanya mengenal tool dari `list_tools`, jadi menambah tool cukup di server. Adapter mengubah skema tool MCP menjadi tool LangChain, dan setiap pemanggilan tetap lewat `call_tool` ke proses server. Adapter 0.3.2 mensyaratkan `mcp<2`, sehingga paket `mcp` dikunci di 1.30.
 
-**MCP lewat stdio.** MCP server berjalan sebagai proses terpisah (`python -m hr_assistant.mcp_server`), dan agent hanya mengenal tool dari `list_tools`. Jadi menambah tool baru cukup di server, tanpa mengubah agent. Transport stdio paling sederhana untuk lokal. Di production, server yang sama bisa dijalankan dengan transport streamable HTTP di belakang autentikasi.
+**gemini-embedding-2 dengan 768 dimensi.** Model ini menerima input sampai 8192 token dan mendukung Bahasa Indonesia, jadi satu bagian dokumen HR muat utuh dalam satu embedding. Dimensi 768 dipilih lewat `output_dimensionality` supaya index kecil, dan vektornya sudah dinormalisasi oleh API. Model ini tidak punya parameter task type, jadi dokumen diberi awalan `title: <bagian> | text:` dan query diberi awalan `task: search result | query:` sesuai panduan Google.
 
-**Guardrail deterministik di kode, bukan hanya di prompt.** Instruksi "jangan mengarang" di prompt bisa diabaikan model. Pemeriksaan sitasi di kode tidak bisa, sehingga perilaku "tidak tahu" bisa diuji dengan test otomatis (`tests/test_agent.py`).
+**Typesense dengan hybrid search.** Typesense menyimpan teks, metadata, dan vektor dalam satu collection, dan satu query bisa menggabungkan pencarian kata kunci dengan pencarian vektor. Kata kunci membantu istilah persis seperti "carry over" atau "Rp350.000", sedangkan vektor menangkap parafrase. Server berjalan di Docker dengan satu perintah, tanpa ekstensi tambahan.
 
-**Loop dengan batas langkah.** Loop berhenti setelah `max_steps` (default 6) panggilan LLM, sehingga model yang terus memanggil tool tidak membuat biaya atau waktu tunggu tak terbatas. Setiap langkah dicatat sebagai `Step` dan bisa dicetak dengan `--trace`.
+**Rerank dengan kemiripan vektor.** Fusion bawaan Typesense menaruh hasil kata kunci saja di urutan atas untuk kata umum seperti "berapa". Retriever karena itu mengambil kandidat 5 kali `top_k`, lalu mengurutkan ulang dengan kemiripan vektor dan memotong ke `top_k`.
+
+**Postgres sebagai sumber data karyawan dan log run.** Data cuti dan relasi atasan-bawahan bersifat relasional, dan constraint (`annual_used <= annual_quota`, foreign key `manager_id`) menjaga data tetap valid. Tabel `agent_runs` mencatat pertanyaan, rute, sumber, langkah, dan latensi setiap run sebagai bahan monitoring dan golden set.
+
+**Alembic untuk migrasi.** Skema dan data dummy masuk lewat dua revisi (`0001_initial_schema`, `0002_seed_dummy_employees`), sehingga `db-init` idempoten dan perubahan skema berikutnya punya riwayat serta jalur downgrade. `db-init` membuat database `hr_assistant` kalau belum ada, lalu menjalankan `upgrade head`.
+
+**pydantic-settings untuk konfigurasi.** Semua setelan dibaca dari `.env` dan environment dengan tipe dan default yang jelas, dan rahasia tidak ada di kode.
+
+**Guardrail deterministik di kode, bukan hanya di prompt.** Instruksi "jangan mengarang" di prompt bisa diabaikan model. Pemeriksaan sitasi dan angka di kode tidak bisa, sehingga perilaku "tidak tahu" bisa diuji dengan test otomatis (`tests/test_guardrail.py`, `tests/test_graph.py`).
