@@ -120,3 +120,45 @@ async def test_max_steps_stops_loop(agent_factory):
     res = await agent.ask("loop")
     assert res.stop_reason == "max_steps" and res.answer == UNKNOWN_ANSWER
     assert len([s for s in res.steps if s.kind == "llm"]) == 3
+
+
+async def test_tool_answer_with_invented_number_rejected(agent_factory):
+    agent = agent_factory([
+        call("get_leave_balance", employee_id="E001"),
+        final("Sisa cuti 7 hari. Carry over maksimal 6 hari dan hangus 31 Maret."),
+        final(UNKNOWN_ANSWER),
+    ])
+    res = await agent.ask("Sisa cuti saya dan aturan carry over?", employee_id="E001")
+    assert res.answer == UNKNOWN_ANSWER
+
+
+async def test_uncited_answer_after_search_rejected_even_with_mcp(agent_factory):
+    agent = agent_factory([
+        call("get_leave_balance", employee_id="E001"),
+        call("search_hr_documents", query="cuti tahunan"),
+        final("Sisa cuti 7 hari dan jatah cuti tahunan 12 hari."),
+        final(f"Sisa cuti 7 hari dan jatah tahunan 12 hari. [sumber: {CUTI_SOURCE}]"),
+    ])
+    res = await agent.ask("Sisa cuti saya dan jatah tahunan?", employee_id="E001")
+    assert res.route == "mixed" and res.sources == [CUTI_SOURCE]
+    assert any(s.kind == "guardrail" for s in res.steps)
+
+
+async def test_partial_tidak_tahu_keeps_tool_answer(agent_factory):
+    text = "Sisa cuti kamu 7 hari. Saya tidak tahu aturan carry over-nya."
+    agent = agent_factory([call("get_leave_balance", employee_id="E001"), final(text)])
+    res = await agent.ask("Sisa cuti saya?", employee_id="E001")
+    assert res.answer == text and res.route == "tool"
+
+
+async def test_tidak_tahu_with_tool_error_keeps_error_message(agent_factory):
+    text = "Maaf, saya tidak tahu karyawan E999: ID tidak ditemukan."
+    agent = agent_factory([call("get_leave_balance", employee_id="E999"), final(text)])
+    res = await agent.ask("Sisa cuti E999?")
+    assert res.answer == text and res.route == "tool"
+
+
+async def test_clarifying_question_with_facts_is_not_bypassed(agent_factory):
+    text = "Bonus tahunan biasanya dua kali gaji pokok. Boleh sebutkan ID karyawan Anda?"
+    agent = agent_factory([final(text), final(text)])
+    assert (await agent.ask("Berapa bonus saya?")).answer == UNKNOWN_ANSWER

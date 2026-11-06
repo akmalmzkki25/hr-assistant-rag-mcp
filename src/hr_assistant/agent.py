@@ -57,6 +57,7 @@ class _Run:
     steps: list[Step] = field(default_factory=list)
     retrieved_ids: set[str] = field(default_factory=set)
     used_mcp: bool = False
+    mcp_outputs: list[str] = field(default_factory=list)
 
 
 class HRAgent:
@@ -86,9 +87,10 @@ class HRAgent:
                     )
                 continue
 
-            if "tidak tahu" in reply.text.lower():
+            # With MCP data in hand, "tidak tahu" may cover only part of the answer, so grounding decides.
+            if not run.used_mcp and "tidak tahu" in reply.text.lower():
                 return AgentResult(UNKNOWN_ANSWER, "none", "final", steps=run.steps)
-            if _asks_for_employee_id(reply.text):
+            if _asks_for_employee_id(reply.text, run):
                 return AgentResult(reply.text, "none", "final", steps=run.steps)
 
             verdict = _check_grounding(reply.text, run)
@@ -133,6 +135,7 @@ class HRAgent:
         result = await self.mcp.call_tool(tool_call.name, tool_call.args)
         run.used_mcp = True
         text = "\n".join(getattr(block, "text", "") for block in result.content)
+        run.mcp_outputs.append(text)
         if result.is_error:
             return {"error": text}
         if result.structured_content:
@@ -144,10 +147,15 @@ class HRAgent:
         return parsed if isinstance(parsed, dict) else {"result": parsed}
 
 
-def _asks_for_employee_id(answer: str) -> bool:
-    """Pertanyaan balik untuk meminta ID karyawan tidak memuat fakta, jadi boleh lolos guardrail."""
-    lowered = answer.lower()
-    return "?" in answer and "id karyawan" in lowered and not _CITATION.search(answer) and not re.search(r"\d", answer)
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+
+def _asks_for_employee_id(answer: str, run: _Run) -> bool:
+    """Satu kalimat tanya yang meminta ID karyawan, sebelum tool apa pun dipakai, tidak memuat fakta."""
+    text = answer.strip()
+    no_tools_used = not any(step.kind == "tool" for step in run.steps)
+    single_question = text.endswith("?") and len(re.findall(r"[.!?]", text)) == 1 and len(text) <= 120
+    return no_tools_used and single_question and "id karyawan" in text.lower() and not _NUMBER.search(text)
 
 
 def _check_grounding(answer: str, run: _Run) -> tuple[str, list[str]] | None:
@@ -157,10 +165,16 @@ def _check_grounding(answer: str, run: _Run) -> tuple[str, list[str]] | None:
     cited = list(dict.fromkeys(_CITATION.findall(answer)))
     if any(source not in run.retrieved_ids for source in cited):
         return None
-    if cited and run.used_mcp:
-        return "mixed", cited
     if cited:
-        return "rag", cited
-    if run.used_mcp:
+        return ("mixed" if run.used_mcp else "rag"), cited
+    if run.retrieved_ids:
+        return None
+    if run.used_mcp and _numbers_in(answer, run.mcp_outputs):
         return "tool", []
     return None
+
+
+def _numbers_in(answer: str, outputs: list[str]) -> bool:
+    """Angka di jawaban tanpa sitasi harus muncul di hasil tool MCP, supaya aturan karangan tidak lolos."""
+    haystack = "\n".join(outputs)
+    return all(number in haystack for number in _NUMBER.findall(answer))

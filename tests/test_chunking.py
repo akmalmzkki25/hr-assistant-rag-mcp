@@ -30,3 +30,9 @@ def test_load_documents_reads_markdown(tmp_path):
     (tmp_path / "x.md").write_text("## A\nisi", encoding="utf-8")
     (tmp_path / "skip.png").write_bytes(b"\x89PNG")
     assert load_documents(tmp_path) == [("x.md", "## A\nisi")]
+
+
+def test_headingless_text_uses_filename_as_section():
+    chunks = chunk_markdown("Kebijakan cuti.\nSetiap karyawan dapat 12 hari.", source="sop/cuti_2026.pdf")
+    assert [c.section for c in chunks] == ["cuti_2026"]
+    assert "12 hari" in chunks[0].text

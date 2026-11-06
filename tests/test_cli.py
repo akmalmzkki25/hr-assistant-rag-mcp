@@ -71,3 +71,29 @@ def test_llm_unavailable_prints_one_line(built_index, monkeypatch, capsys):
     patch_agent_to_raise(monkeypatch, LLMUnavailableError("kuota habis"))
     assert cli.main(["ask", "Berapa cuti?"]) == 1
     assert capsys.readouterr().err.strip().splitlines() == ["LLM tidak tersedia: kuota habis"]
+
+
+def test_ingest_with_no_chunks_exits_2(tmp_path, monkeypatch, capsys):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "kosong.md").write_text("# Judul saja\n\n## Bagian kosong\n", encoding="utf-8")
+    monkeypatch.setenv("HR_DOCS_DIR", str(docs))
+    monkeypatch.setenv("HR_INDEX_DIR", str(tmp_path / "index"))
+    assert cli.main(["ingest"]) == 2
+    assert "Tidak ada teks yang bisa di-index" in capsys.readouterr().err
+
+
+def test_ctrl_c_returns_130(monkeypatch, capsys):
+    def interrupted(args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_cmd_ask", interrupted)
+    assert cli.main(["ask", "Berapa cuti?"]) == 130
+    assert "Dibatalkan." in capsys.readouterr().err
+
+
+def test_read_line_returns_typed_text(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("builtins.input", lambda prompt: "halo")
+    assert asyncio.run(cli._read_line("Kamu: ")) == "halo"

@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import sys
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,6 +36,9 @@ def main(argv: list[str] | None = None) -> int:
     except LLMUnavailableError as error:
         print(f"LLM tidak tersedia: {error}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("Dibatalkan.", file=sys.stderr)
+        return 130
     except BaseExceptionGroup as group:
         llm_errors = group.subgroup(LLMUnavailableError)
         if llm_errors is None:
@@ -76,15 +80,17 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _cmd_ingest(args: argparse.Namespace) -> int:
+    from hr_assistant.chunking import chunk_markdown, load_documents
     from hr_assistant.embeddings import FastEmbedEmbedder
     from hr_assistant.rag import build_index
-    from hr_assistant.chunking import load_documents
     from hr_assistant.vector_store import ChromaStore
 
     settings = load_settings()
     documents = load_documents(settings.docs_dir)
     if not documents:
         raise UsageError(f"Tidak ada dokumen .md, .txt, atau .pdf di {settings.docs_dir}")
+    if not any(chunk_markdown(text, source=name) for name, text in documents):
+        raise UsageError(f"Tidak ada teks yang bisa di-index di {settings.docs_dir}. Untuk PDF hasil scan, jalankan OCR dulu.")
     store = ChromaStore(settings.index_dir, settings.collection)
     count = build_index(settings.docs_dir, store, FastEmbedEmbedder(settings.embedding_model))
     print(f"Index dibuat: {count} chunk dari {len(documents)} dokumen.")
@@ -115,7 +121,7 @@ def _cmd_chat(args: argparse.Namespace) -> int:
             print("Ketik pertanyaan. Kosongkan lalu Enter untuk keluar.")
             while True:
                 try:
-                    question = (await asyncio.to_thread(input, "Kamu: ")).strip()
+                    question = (await _read_line("Kamu: ")).strip()
                 except EOFError:
                     return
                 if not question:
@@ -161,6 +167,23 @@ async def open_agent(settings: Settings) -> AsyncIterator[HRAgent]:
     )
     async with Client(params) as mcp:
         yield HRAgent(llm, mcp, retriever, max_steps=settings.max_steps)
+
+
+async def _read_line(prompt: str) -> str:
+    """Baca input di daemon thread: asyncio.to_thread akan menahan Ctrl+C sampai Enter ditekan."""
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[str] = loop.create_future()
+
+    def read() -> None:
+        try:
+            line = input(prompt)
+        except BaseException as error:
+            loop.call_soon_threadsafe(future.set_exception, error)
+        else:
+            loop.call_soon_threadsafe(future.set_result, line)
+
+    threading.Thread(target=read, daemon=True).start()
+    return await future
 
 
 def _require_question(question: str) -> str:

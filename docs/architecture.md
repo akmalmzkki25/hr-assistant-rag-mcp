@@ -73,7 +73,7 @@ Yang memilih tool adalah Gemini, berdasarkan deskripsi tool dan aturan di system
 
 Pilihan model itu tidak dipercaya begitu saja. Setelah model memberi jawaban final, guardrail deterministik di `agent.py` memeriksa jawabannya:
 
-1. Jawaban harus berasal dari hasil tool. Hasil MCP (sukses atau error) dihitung sebagai sumber. Jawaban dari dokumen wajib menyertakan sitasi `[sumber: <source_id>]`.
+1. Jawaban harus berasal dari hasil tool. Kalau `search_hr_documents` menemukan chunk, jawaban wajib menyertakan sitasi `[sumber: <source_id>]`. Jawaban yang hanya memakai hasil MCP (sukses atau error) boleh tanpa sitasi, asalkan setiap angka di jawaban muncul di hasil tool.
 2. Setiap sitasi harus cocok dengan chunk yang benar-benar diambil retriever untuk pertanyaan ini. Sitasi karangan langsung ditolak.
 3. Kalau gagal, agent diberi satu pesan koreksi dan satu kesempatan lagi. Kalau masih gagal, jawabannya diganti dengan kalimat baku: "Maaf, saya tidak tahu. Informasi itu tidak ada di dokumen HR yang saya punya."
 4. Retriever hanya mengembalikan chunk dengan skor kemiripan minimal 0,45. Pertanyaan di luar dokumen mendapat `found=false`, sehingga model tidak punya bahan untuk mengarang.

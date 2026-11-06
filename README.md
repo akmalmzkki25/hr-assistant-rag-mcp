@@ -13,7 +13,7 @@ Dokumen HR di `data/docs/` dan data karyawan di `data/employees.json` adalah con
 | 3. MCP server dengan `get_leave_balance` dan `get_subordinat_list` | `src/hr_assistant/mcp_server.py` |
 | 4. Agent dengan tool calling lewat MCP, guardrail, harness dan loop | `src/hr_assistant/agent.py`, `llm.py`, `prompts.py`, `evals.py` |
 | 5. Dokumentasi | README ini |
-| Test otomatis | `tests/` (49 test, tanpa jaringan) |
+| Test otomatis | `tests/` (60 test, tanpa jaringan) |
 
 ## Setup
 
@@ -63,6 +63,8 @@ Pertanyaan di luar dokumen, yang harus dijawab "tidak tahu":
 
 Tambahkan `--trace` untuk melihat setiap langkah agent (panggilan LLM, tool, guardrail) sebagai JSON. Mode interaktif tersedia lewat `chat --employee-id E001`.
 
+Kalau muncul `LLM tidak tersedia: 404 NOT_FOUND ... ganti GEMINI_MODEL`, model default belum tersedia untuk key kamu. Isi `GEMINI_MODEL` di `.env` dengan model yang ada di daftar Google AI Studio, misalnya `gemini-2.5-flash`. Kalau muncul `429 RESOURCE_EXHAUSTED`, kuota gratis per menit habis; tunggu sebentar lalu ulangi.
+
 Menjalankan eval harness (12 kasus, jeda 4 detik antar kasus untuk kuota gratis):
 
 ```bash
@@ -106,7 +108,7 @@ Agent mengirim pertanyaan ke Gemini bersama dua jenis tool: `search_hr_documents
 
 **Satu kali revisi sebelum "tidak tahu".** Kalau jawaban pertama tidak punya sitasi valid, agent diberi satu pesan koreksi. Ini memulihkan kasus model lupa menulis sitasi, dengan biaya satu panggilan LLM tambahan. Lebih dari satu revisi jarang membantu dan membuat jawaban lambat.
 
-**Guardrail berbasis sitasi.** Guardrail ini memastikan jawaban menunjuk ke chunk yang benar-benar diambil, tetapi belum memeriksa apakah isi kalimatnya benar-benar didukung chunk itu. Pemeriksaan isi butuh LLM judge atau model NLI, dan masuk rencana eval di bawah.
+**Guardrail berbasis sitasi dan angka.** Jawaban dari dokumen harus menunjuk chunk yang benar-benar diambil. Jawaban dari tool MCP tanpa sitasi hanya lolos kalau setiap angka di dalamnya muncul di hasil tool, sehingga aturan karangan seperti "carry over maksimal 6 hari" ditolak. Guardrail ini belum memeriksa apakah isi kalimat benar-benar didukung chunk, dan angka yang ditulis dengan huruf ("dua kali") tidak ikut diperiksa. Pemeriksaan isi butuh LLM judge atau model NLI, dan masuk rencana eval di bawah.
 
 ## Harness dan loop engineering
 
@@ -137,7 +139,7 @@ Eval harness di repo ini adalah titik awal. Untuk production, eval berikut perlu
 
 ## Status verifikasi
 
-- 49 test otomatis lulus (`pytest -q`). Test tidak memakai jaringan: embedder palsu, LLM skrip, dan MCP server in-process. Satu test menjalankan MCP server sungguhan lewat stdio.
+- 60 test otomatis lulus (`pytest -q`). Test tidak memakai jaringan: embedder palsu, LLM skrip, dan MCP server in-process. Satu test menjalankan MCP server sungguhan lewat stdio.
 - `ingest` sudah dijalankan dengan model embedding sungguhan: 22 chunk dari 5 dokumen.
 - Jalur CLI sampai Gemini sudah diuji dengan key yang sengaja salah. Agent menyalakan MCP server lewat stdio, memuat embedder, memanggil Gemini, lalu menampilkan error satu baris: `LLM tidak tersedia: 400 INVALID_ARGUMENT: API key not valid.`
 - Demo dengan key Gemini asli dan hasil `eval` belum dijalankan, karena key belum tersedia saat repo ini dibuat.
@@ -145,6 +147,6 @@ Eval harness di repo ini adalah titik awal. Untuk production, eval berikut perlu
 ## Keterbatasan
 
 - Data karyawan adalah dummy di berkas JSON, tanpa autentikasi. Di production, ID karyawan harus diambil dari sesi login, bukan dari argumen yang bisa diisi siapa saja, dan MCP server harus memeriksa bahwa penanya hanya boleh melihat datanya sendiri atau data bawahannya.
-- Guardrail memeriksa sitasi, belum memeriksa kebenaran isi kalimat (lihat Trade-off).
+- Guardrail memeriksa sitasi dan angka, belum memeriksa kebenaran isi kalimat (lihat Trade-off).
 - Pertanyaan lanjutan di mode `chat` belum membawa riwayat percakapan sebelumnya. Setiap pertanyaan diproses sendiri.
 - Index dibangun ulang penuh setiap `ingest`. Untuk dokumen yang sering berubah, perlu ingest inkremental berdasarkan hash berkas.

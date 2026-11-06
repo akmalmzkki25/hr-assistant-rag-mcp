@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from pypdf import PdfReader
 
@@ -20,8 +20,14 @@ class Chunk:
 
 
 def chunk_markdown(text: str, source: str, max_chars: int = 700, overlap_chars: int = 100) -> list[Chunk]:
+    if any(_HEADING.match(line) for line in text.splitlines()):
+        sections = _sections(text)
+    else:
+        # PDF and plain text extraction has no Markdown headings, so the file name labels the section.
+        body = "\n".join(line for line in text.splitlines() if line.strip()).strip()
+        sections = [(PurePosixPath(source).stem, body)] if body else []
     chunks: list[Chunk] = []
-    for section, body in _sections(text):
+    for section, body in sections:
         for piece in _split_body(body, max_chars, overlap_chars):
             chunks.append(Chunk(id=f"{source}::{len(chunks)}", text=f"{section}\n{piece}", source=source, section=section))
     return chunks

@@ -89,3 +89,26 @@ def test_bad_request_is_not_retried(monkeypatch):
         llm.generate("sys", [Message(role="user", text="hai")], [])
     assert calls.count == 1
     assert str(raised.value) == "400 RESOURCE_EXHAUSTED: kuota habis"
+
+
+def test_network_error_retried_then_unavailable(monkeypatch):
+    import httpx
+
+    llm = GeminiLLM("m", api_key="x", max_retries=2, sleep=lambda s: None)
+    calls = Counter()
+
+    def offline(**kwargs):
+        calls.count += 1
+        raise httpx.ConnectError("getaddrinfo failed")
+
+    monkeypatch.setattr(llm._client.models, "generate_content", offline)
+    with pytest.raises(LLMUnavailableError, match="Tidak bisa terhubung ke Gemini"):
+        llm.generate("sys", [Message(role="user", text="hai")], [])
+    assert calls.count == 3
+
+
+def test_model_not_found_hints_gemini_model(monkeypatch):
+    llm = GeminiLLM("gemini-salah", api_key="x", sleep=lambda s: None)
+    fake_generate_raising(monkeypatch, llm, code=404)
+    with pytest.raises(LLMUnavailableError, match="GEMINI_MODEL"):
+        llm.generate("sys", [Message(role="user", text="hai")], [])

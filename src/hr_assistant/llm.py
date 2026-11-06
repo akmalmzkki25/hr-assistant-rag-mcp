@@ -5,8 +5,17 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+import httpx
 from google import genai
 from google.genai import errors, types
+
+try:
+    import httpx2
+except ImportError:
+    httpx2 = None
+
+# google-genai may use either HTTP client, so network failures arrive as either family.
+_TRANSPORT_ERRORS = (httpx.TransportError,) + ((httpx2.TransportError,) if httpx2 else ())
 
 
 @dataclass(frozen=True)
@@ -77,9 +86,18 @@ class GeminiLLM:
             except (errors.ClientError, errors.ServerError) as error:
                 retryable = isinstance(error, errors.ServerError) or error.code == 429
                 if not retryable or attempt == self.max_retries:
-                    raise LLMUnavailableError(f"{error.code} {error.status}: {error.message}") from error
-                self._sleep(2**attempt)
+                    raise LLMUnavailableError(self._describe(error)) from error
+            except _TRANSPORT_ERRORS as error:
+                if attempt == self.max_retries:
+                    raise LLMUnavailableError(f"Tidak bisa terhubung ke Gemini: {error}") from error
+            self._sleep(2**attempt)
         raise AssertionError("unreachable")
+
+    def _describe(self, error: errors.APIError) -> str:
+        message = f"{error.code} {error.status}: {error.message}"
+        if error.code == 404:
+            message += f". Model {self.model} tidak tersedia, ganti GEMINI_MODEL di .env."
+        return message
 
 
 def to_gemini_tools(tools: Sequence[ToolSpec]) -> list[types.Tool] | None:
