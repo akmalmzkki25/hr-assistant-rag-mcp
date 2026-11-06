@@ -115,23 +115,23 @@ sequenceDiagram
     participant M as MCP server
     participant V as node guardrail
 
-    U->>A: "Sisa cuti saya berapa? Kalau mau carry over, aturannya apa?"
-    A->>G: pesan + tool: search_hr_documents, get_leave_balance, get_subordinat_list
+    U->>A: "Sisa cuti saya berapa?<br/>Kalau mau carry over, aturannya apa?"
+    A->>G: pesan + tool: search_hr_documents,<br/>get_leave_balance, get_subordinat_list
     G-->>A: call get_leave_balance(employee_id=E001)
     A->>T: tool call
-    T->>M: call_tool get_leave_balance (akses: data sendiri)
+    T->>M: call_tool get_leave_balance<br/>(akses: data sendiri)
     M-->>T: {"annual_remaining": 7, ...}
     T->>A: ToolMessage
     A->>G: hasil tool
     G-->>A: call search_hr_documents(query="carry over cuti")
     A->>T: tool call
     T->>R: search("carry over cuti")
-    R-->>T: chunk kebijakan_cuti.md#Kebijakan Cuti > Carry Over Cuti
+    R-->>T: chunk kebijakan_cuti.md#35;<br/>Kebijakan Cuti > Carry Over Cuti
     T->>A: ToolMessage + artifact chunk
     A->>G: hasil tool
-    G-->>A: jawaban + [sumber: kebijakan_cuti.md#Kebijakan Cuti > Carry Over Cuti]
+    G-->>A: jawaban + [sumber: kebijakan_cuti.md#35;<br/>Kebijakan Cuti > Carry Over Cuti]
     A->>V: jawaban final
-    V-->>U: lolos: sitasi cocok, angka 7 dan 5 ada di data giliran ini. route=mixed
+    V-->>U: lolos: sitasi cocok, angka 7 dan 5<br/>ada di data giliran ini. route=mixed
 ```
 
 ### Justifikasi komponen
