@@ -162,7 +162,7 @@ sequenceDiagram
 
 Butuh Python 3.12, [uv](https://docs.astral.sh/uv/), dan Docker.
 
-Jalankan Typesense dan Postgres:
+Jalankan Typesense dan Postgres. Ganti `ganti-password-typesense` dan `ganti-password-postgres` dengan password sendiri, lalu pakai nilai yang sama di `.env`.
 
 ```bash
 docker run -d --name typesense --restart unless-stopped -p 8108:8108 -v typesense_data:/data typesense/typesense:0.25.2 --data-dir /data --api-key=ganti-password-typesense --listen-port 8108 --enable-cors
