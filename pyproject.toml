@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hr-assistant"
+version = "0.1.0"
+description = "Chatbot HR internal: RAG atas dokumen HR dan tool MCP untuk data karyawan."
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=2.3,<3",
+    "google-genai>=3.0",
+    "chromadb>=1.5",
+    "fastembed>=0.9",
+    "pypdf>=5",
+    "python-dotenv>=1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
